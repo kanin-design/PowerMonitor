@@ -1,0 +1,5 @@
+node_modules/
+PowerMonitor-darwin-arm64/
+dist/
+*.log
+.DS_Store

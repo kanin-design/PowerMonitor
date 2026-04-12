@@ -1,0 +1,19 @@
+{
+  "name": "powermonitor",
+  "version": "0.0.1",
+  "description": "Desktop power monitor app",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "postinstall": "electron-rebuild -f -w better-sqlite3",
+    "build": "npx @electron/packager . PowerMonitor --platform=darwin --arch=arm64"
+  },
+  "devDependencies": {
+    "@electron/packager": "^18.3.0",
+    "@electron/rebuild": "^4.0.3",
+    "electron": "^33.0.0"
+  },
+  "dependencies": {
+    "better-sqlite3": "^12.8.0"
+  }
+}
