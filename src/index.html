@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Power Monitor</title>
+  <link rel="stylesheet" href="app.css" />
+</head>
+<body>
+  <!-- Sidebar -->
+  <aside class="sidebar">
+
+    <div class="sb-top">
+      <div class="sb-pct" id="sb-batt">—</div>
+      <div class="sb-bar-track"><div class="sb-bar-fill" id="sb-batt-fill"></div></div>
+      <div class="sb-status" id="sb-state">—</div>
+    </div>
+
+    <div class="sb-stats">
+      <div class="sb-chip">
+        <div class="sb-chip-val" id="sb-timeleft">—</div>
+        <div class="sb-chip-lbl">remaining</div>
+      </div>
+      <div class="sb-chip">
+        <div class="sb-chip-val" id="sb-watts">—</div>
+        <div class="sb-chip-lbl">watts</div>
+      </div>
+    </div>
+
+    <div class="sb-procs">
+      <div class="section-label">Processes</div>
+      <div class="proc-list" id="proc-list">
+        <div class="proc-loading">
+          <div class="skeleton-row"></div>
+          <div class="skeleton-row"></div>
+          <div class="skeleton-row"></div>
+          <div class="skeleton-row"></div>
+          <div class="skeleton-row"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="sb-asserts" id="sb-asserts" style="display:none">
+      <div class="sb-asserts-divider"></div>
+      <div class="section-label" id="assert-label">Assertions</div>
+      <div class="assert-list" id="assert-list"></div>
+    </div>
+
+  </aside>
+
+  <!-- Main -->
+  <main class="main">
+    <div class="main-header">
+      <div class="main-title-wrap">
+        <span class="main-title" id="main-title" title="">MacBook</span>
+        <span class="main-sub" id="main-sub"></span>
+      </div>
+      <div class="header-right">
+        <span class="last-update" id="last-update">—</span>
+        <div class="range-bar" id="range-bar">
+          <button class="range-btn" data-min="10">10m</button>
+          <button class="range-btn" data-min="30">30m</button>
+          <button class="range-btn" data-min="60">1h</button>
+          <button class="range-btn" data-min="180">3h</button>
+          <button class="range-btn active" data-min="0">All</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Battery chart -->
+    <section class="chart-card">
+      <div class="chart-hdr">
+        <span class="chart-lbl">Battery Level</span>
+        <span class="chart-meta" id="batt-range">—</span>
+      </div>
+      <div class="chart-wrap">
+        <canvas id="batt-canvas"></canvas>
+        <div class="chart-empty" id="batt-empty">Awaiting data…</div>
+      </div>
+    </section>
+
+    <!-- Power Draw chart -->
+    <section class="chart-card">
+      <div class="chart-hdr">
+        <span class="chart-lbl">Power Draw</span>
+        <span class="chart-meta" id="watts-range">—</span>
+        <span class="charging-indicator" id="charging-indicator"></span>
+      </div>
+      <div class="chart-wrap">
+        <canvas id="watts-canvas"></canvas>
+        <div class="chart-empty" id="watts-empty">Awaiting data…</div>
+      </div>
+    </section>
+
+    <!-- CPU chart -->
+    <section class="chart-card">
+      <div class="chart-hdr">
+        <span class="chart-lbl">CPU by Process <span class="chart-lbl-sub">(per-core %)</span></span>
+        <span class="chart-meta" id="cpu-range">—</span>
+      </div>
+      <div class="chart-wrap">
+        <canvas id="cpu-canvas"></canvas>
+        <div class="chart-empty" id="cpu-empty">Awaiting data…</div>
+      </div>
+      <div class="legend" id="cpu-legend"></div>
+    </section>
+  </main>
+
+  <!-- Tooltip -->
+  <div id="tooltip">
+    <div class="tt-time" id="tt-time"></div>
+    <div id="tt-body"></div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
