@@ -7,28 +7,33 @@
   <link rel="stylesheet" href="app.css" />
 </head>
 <body>
+  <div class="drag-region"></div>
+
   <!-- Sidebar -->
   <aside class="sidebar">
 
     <div class="sb-top">
-      <div class="sb-pct" id="sb-batt">—</div>
+      <div class="sb-status-label">Status</div>
+      <div class="sb-pct-wrap">
+        <span class="sb-pct-num" id="sb-batt-num">—</span><span class="sb-pct-sym">%</span>
+      </div>
       <div class="sb-bar-track"><div class="sb-bar-fill" id="sb-batt-fill"></div></div>
-      <div class="sb-status" id="sb-state">—</div>
+      <div class="sb-charging" id="sb-state">—</div>
     </div>
 
     <div class="sb-stats">
       <div class="sb-chip">
+        <div class="sb-chip-lbl">Remaining</div>
         <div class="sb-chip-val" id="sb-timeleft">—</div>
-        <div class="sb-chip-lbl">remaining</div>
       </div>
       <div class="sb-chip">
+        <div class="sb-chip-lbl">Current Draw</div>
         <div class="sb-chip-val" id="sb-watts">—</div>
-        <div class="sb-chip-lbl">watts</div>
       </div>
     </div>
 
     <div class="sb-procs">
-      <div class="section-label">Processes</div>
+      <div class="section-label">Top Processes</div>
       <div class="proc-list" id="proc-list">
         <div class="proc-loading">
           <div class="skeleton-row"></div>
@@ -46,32 +51,40 @@
       <div class="assert-list" id="assert-list"></div>
     </div>
 
+    <div class="sb-footer">
+      <span id="last-update">—</span>
+    </div>
+
   </aside>
 
   <!-- Main -->
   <main class="main">
     <div class="main-header">
       <div class="main-title-wrap">
-        <span class="main-title" id="main-title" title="">MacBook</span>
+        <div class="main-title-row">
+          <span class="main-title" id="main-title">MacBook</span>
+          <span class="main-chip" id="main-chip"></span>
+        </div>
         <span class="main-sub" id="main-sub"></span>
       </div>
-      <div class="header-right">
-        <span class="last-update" id="last-update">—</span>
-        <div class="range-bar" id="range-bar">
-          <button class="range-btn" data-min="10">10m</button>
-          <button class="range-btn" data-min="30">30m</button>
-          <button class="range-btn" data-min="60">1h</button>
-          <button class="range-btn" data-min="180">3h</button>
-          <button class="range-btn active" data-min="0">All</button>
-        </div>
+      <div class="range-bar" id="range-bar">
+        <button class="range-btn" data-min="10">10m</button>
+        <button class="range-btn" data-min="30">30m</button>
+        <button class="range-btn" data-min="60">1h</button>
+        <button class="range-btn" data-min="180">3h</button>
+        <button class="range-btn active" data-min="0">All</button>
       </div>
     </div>
 
     <!-- Battery chart -->
     <section class="chart-card">
       <div class="chart-hdr">
-        <span class="chart-lbl">Battery Level</span>
-        <span class="chart-meta" id="batt-range">—</span>
+        <span class="chart-lbl"><span class="chart-dot" style="color:#30D158">●</span> Battery Level</span>
+        <div class="chart-meta-right">
+          <span class="chart-stat">High <strong id="batt-high">—</strong></span>
+          <span class="chart-stat">Low <strong id="batt-low">—</strong></span>
+          <span class="chart-range" id="batt-range">—</span>
+        </div>
       </div>
       <div class="chart-wrap">
         <canvas id="batt-canvas"></canvas>
@@ -82,9 +95,13 @@
     <!-- Power Draw chart -->
     <section class="chart-card">
       <div class="chart-hdr">
-        <span class="chart-lbl">Power Draw</span>
-        <span class="chart-meta" id="watts-range">—</span>
-        <span class="charging-indicator" id="charging-indicator"></span>
+        <span class="chart-lbl"><span class="chart-dot" style="color:#58a6ff">●</span> Power Draw</span>
+        <div class="chart-meta-right">
+          <span class="chart-stat">Avg <strong id="watts-avg">—</strong></span>
+          <span class="chart-stat">Peak <strong id="watts-peak">—</strong></span>
+          <span class="chart-range" id="watts-range">—</span>
+          <span class="charging-indicator" id="charging-indicator"></span>
+        </div>
       </div>
       <div class="chart-wrap">
         <canvas id="watts-canvas"></canvas>
@@ -95,8 +112,10 @@
     <!-- CPU chart -->
     <section class="chart-card">
       <div class="chart-hdr">
-        <span class="chart-lbl">CPU by Process <span class="chart-lbl-sub">(per-core %)</span></span>
-        <span class="chart-meta" id="cpu-range">—</span>
+        <span class="chart-lbl"><span class="chart-dot" style="color:#a371f7">●</span> CPU by Process <span class="chart-lbl-sub">(per-core %)</span></span>
+        <div class="chart-meta-right">
+          <span class="chart-range" id="cpu-range">—</span>
+        </div>
       </div>
       <div class="chart-wrap">
         <canvas id="cpu-canvas"></canvas>
