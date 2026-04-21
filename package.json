@@ -6,7 +6,7 @@
   "scripts": {
     "start": "electron .",
     "postinstall": "electron-rebuild -f -w better-sqlite3",
-    "build": "npx @electron/packager . PowerMonitor --platform=darwin --arch=arm64 --overwrite && cp icons/mac/icon.icns PowerMonitor-darwin-arm64/PowerMonitor.app/Contents/Resources/electron.icns"
+    "build": "./build.sh"
   },
   "devDependencies": {
     "@electron/packager": "^18.3.0",
