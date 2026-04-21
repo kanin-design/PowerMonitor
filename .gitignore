@@ -1,5 +1,7 @@
 node_modules/
 PowerMonitor-darwin-arm64/
+release-builds/
 dist/
 *.log
 .DS_Store
+.claude/

@@ -7,128 +7,137 @@
   <link rel="stylesheet" href="app.css" />
 </head>
 <body>
-  <div class="drag-region"></div>
+  <div class="app">
 
-  <!-- Sidebar -->
-  <aside class="sidebar">
+    <!-- Sidebar -->
+    <aside class="sidebar">
 
-    <div class="sb-top">
-      <div class="sb-status-label">Status</div>
-      <div class="sb-pct-wrap">
-        <span class="sb-pct-num" id="sb-batt-num">—</span><span class="sb-pct-sym">%</span>
-      </div>
-      <div class="sb-bar-track"><div class="sb-bar-fill" id="sb-batt-fill"></div></div>
-      <div class="sb-charging" id="sb-state">—</div>
-    </div>
+      <section class="sidebar-section battery-section">
+        <div class="battery-display">
+          <span class="battery-percent" id="sb-batt-num">—%</span>
+          <span class="battery-status" id="sb-state">—</span>
+        </div>
+      </section>
 
-    <div class="sb-stats">
-      <div class="sb-chip">
-        <div class="sb-chip-lbl">Remaining</div>
-        <div class="sb-chip-val" id="sb-timeleft">—</div>
-      </div>
-      <div class="sb-chip">
-        <div class="sb-chip-lbl">Current Draw</div>
-        <div class="sb-chip-val" id="sb-watts">—</div>
-      </div>
-    </div>
+      <section class="sidebar-section">
+        <div class="stats-grid">
+          <div class="stat-box">
+            <span class="stat-value" id="sb-timeleft">—</span>
+            <span class="stat-label">Time Left</span>
+          </div>
+          <div class="stat-box">
+            <span class="stat-value" id="sb-watts">—</span>
+            <span class="stat-label">Power</span>
+          </div>
+        </div>
+      </section>
 
-    <div class="sb-procs">
-      <div class="section-label">Top Processes</div>
-      <div class="proc-list" id="proc-list">
-        <div class="proc-loading">
-          <div class="skeleton-row"></div>
-          <div class="skeleton-row"></div>
-          <div class="skeleton-row"></div>
-          <div class="skeleton-row"></div>
-          <div class="skeleton-row"></div>
+      <section class="sidebar-section processes-section">
+        <h3 class="section-header">Processes</h3>
+        <div class="process-list" id="proc-list">
+          <div class="skeleton"></div>
+          <div class="skeleton"></div>
+          <div class="skeleton"></div>
+          <div class="skeleton"></div>
+          <div class="skeleton"></div>
+        </div>
+      </section>
+
+      <section class="sidebar-section" id="sb-asserts" style="display:none">
+        <h3 class="section-header">Assertions</h3>
+        <div class="assertions-list" id="assert-list">
+          <span class="assertion-empty">No active assertions</span>
+        </div>
+      </section>
+
+    </aside>
+
+    <!-- Main -->
+    <div class="content">
+
+      <div class="titlebar-spacer">
+        <div class="header-info">
+          <span class="model-name" id="main-title">MacBook</span>
+          <span class="header-sep">·</span>
+          <span class="date-range" id="main-sub"></span>
+          <span class="header-sep" id="updated-sep" style="display:none">·</span>
+          <span class="updated" id="last-update"></span>
+        </div>
+        <div class="header-controls">
+          <div class="range-control" id="range-bar">
+            <button class="range-btn" data-min="10">10m</button>
+            <button class="range-btn" data-min="60">1h</button>
+            <button class="range-btn" data-min="360">6h</button>
+            <button class="range-btn" data-min="1440">24h</button>
+            <button class="range-btn active" data-min="0">All</button>
+          </div>
+          <button class="theme-toggle" id="theme-toggle" aria-label="Toggle theme">
+            <span class="theme-icon-light">☀️</span>
+            <span class="theme-icon-dark">🌙</span>
+          </button>
         </div>
       </div>
-    </div>
 
-    <div class="sb-asserts" id="sb-asserts" style="display:none">
-      <div class="sb-asserts-divider"></div>
-      <div class="section-label" id="assert-label">Assertions</div>
-      <div class="assert-list" id="assert-list"></div>
-    </div>
+      <div class="charts">
 
-    <div class="sb-footer">
-      <span id="last-update">—</span>
-    </div>
-
-  </aside>
-
-  <!-- Main -->
-  <main class="main">
-    <div class="main-header">
-      <div class="main-title-wrap">
-        <div class="main-title-row">
-          <span class="main-title" id="main-title">MacBook</span>
-          <span class="main-chip" id="main-chip"></span>
+        <div class="chart-card" data-chart-id="batt">
+          <div class="chart-header">
+            <span class="chart-title">Battery Level</span>
+            <span class="chart-meta" id="batt-range"></span>
+          </div>
+          <div class="chart-body">
+            <canvas id="batt-canvas" role="img" aria-label="Battery level over time"></canvas>
+            <div class="chart-empty" id="batt-empty">Awaiting data…</div>
+          </div>
         </div>
-        <span class="main-sub" id="main-sub"></span>
-      </div>
-      <div class="range-bar" id="range-bar">
-        <button class="range-btn" data-min="10">10m</button>
-        <button class="range-btn" data-min="30">30m</button>
-        <button class="range-btn" data-min="60">1h</button>
-        <button class="range-btn" data-min="180">3h</button>
-        <button class="range-btn active" data-min="0">All</button>
+
+        <div class="chart-card" data-chart-id="watts">
+          <div class="chart-header">
+            <span class="chart-title">Power Draw</span>
+            <span class="chart-meta" id="watts-range"></span>
+          </div>
+          <div class="chart-body">
+            <canvas id="watts-canvas" role="img" aria-label="Power draw over time"></canvas>
+            <div class="chart-empty" id="watts-empty">Awaiting data…</div>
+          </div>
+        </div>
+
+        <div class="chart-card" data-chart-id="cpu">
+          <div class="chart-header">
+            <span class="chart-title">CPU by Process <span class="chart-title-sub">(per-core %)</span></span>
+            <span class="chart-meta" id="cpu-range"></span>
+          </div>
+          <div class="chart-body">
+            <canvas id="cpu-canvas" role="img" aria-label="CPU usage by process"></canvas>
+            <div class="chart-empty" id="cpu-empty">Awaiting data…</div>
+          </div>
+          <div class="legend" id="cpu-legend"></div>
+          <div class="sysinfo-panel" id="sysinfo-panel" style="display:none">
+            <div class="sysinfo-row"><span class="sysinfo-label">Model</span><span class="sysinfo-value" id="si-model">—</span></div>
+            <div class="sysinfo-row"><span class="sysinfo-label">Chip</span><span class="sysinfo-value" id="si-chip">—</span></div>
+            <div class="sysinfo-row"><span class="sysinfo-label">Cores</span><span class="sysinfo-value" id="si-cores">—</span></div>
+            <div class="sysinfo-row"><span class="sysinfo-label">Memory</span><span class="sysinfo-value" id="si-mem">—</span></div>
+          </div>
+        </div>
+
       </div>
     </div>
-
-    <!-- Battery chart -->
-    <section class="chart-card">
-      <div class="chart-hdr">
-        <span class="chart-lbl"><span class="chart-dot" style="color:#30D158">●</span> Battery Level</span>
-        <div class="chart-meta-right">
-          <span class="chart-stat">High <strong id="batt-high">—</strong></span>
-          <span class="chart-stat">Low <strong id="batt-low">—</strong></span>
-          <span class="chart-range" id="batt-range">—</span>
-        </div>
-      </div>
-      <div class="chart-wrap">
-        <canvas id="batt-canvas"></canvas>
-        <div class="chart-empty" id="batt-empty">Awaiting data…</div>
-      </div>
-    </section>
-
-    <!-- Power Draw chart -->
-    <section class="chart-card">
-      <div class="chart-hdr">
-        <span class="chart-lbl"><span class="chart-dot" style="color:#58a6ff">●</span> Power Draw</span>
-        <div class="chart-meta-right">
-          <span class="chart-stat">Avg <strong id="watts-avg">—</strong></span>
-          <span class="chart-stat">Peak <strong id="watts-peak">—</strong></span>
-          <span class="chart-range" id="watts-range">—</span>
-          <span class="charging-indicator" id="charging-indicator"></span>
-        </div>
-      </div>
-      <div class="chart-wrap">
-        <canvas id="watts-canvas"></canvas>
-        <div class="chart-empty" id="watts-empty">Awaiting data…</div>
-      </div>
-    </section>
-
-    <!-- CPU chart -->
-    <section class="chart-card">
-      <div class="chart-hdr">
-        <span class="chart-lbl"><span class="chart-dot" style="color:#a371f7">●</span> CPU by Process <span class="chart-lbl-sub">(per-core %)</span></span>
-        <div class="chart-meta-right">
-          <span class="chart-range" id="cpu-range">—</span>
-        </div>
-      </div>
-      <div class="chart-wrap">
-        <canvas id="cpu-canvas"></canvas>
-        <div class="chart-empty" id="cpu-empty">Awaiting data…</div>
-      </div>
-      <div class="legend" id="cpu-legend"></div>
-    </section>
-  </main>
+  </div>
 
   <!-- Tooltip -->
-  <div id="tooltip">
-    <div class="tt-time" id="tt-time"></div>
-    <div id="tt-body"></div>
+  <div class="tooltip" id="tooltip">
+    <div class="tooltip-header">
+      <span class="tooltip-time" id="tt-time"></span>
+    </div>
+    <div class="tooltip-body" id="tt-body"></div>
+  </div>
+
+  <!-- Model-name hover panel -->
+  <div class="tooltip" id="model-tooltip" style="display:none; pointer-events:none; position:fixed; z-index:1000">
+    <div class="tooltip-header">
+      <span class="tooltip-time">System Info</span>
+    </div>
+    <div class="tooltip-body" id="mt-body"></div>
   </div>
 
   <script src="app.js"></script>

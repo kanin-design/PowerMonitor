@@ -192,10 +192,13 @@ function queryEntries(limit = 3000) {
 /* ── Window ──────────────────────────────────────────────────────────────── */
 function createWindow() {
   mainWindow = new BrowserWindow({
-    width: 600,
-    height: 700,
+    width: 920,
+    height: 680,
+    minWidth: 800,
+    minHeight: 560,
     titleBarStyle: 'hiddenInset',
-    backgroundColor: '#0c0c0e',
+    trafficLightPosition: { x: 16, y: 16 },
+    backgroundColor: '#1C1C1E',
     icon: join(__dirname, "icons", "mac", "icon.icns"),
     webPreferences: {
       preload: join(__dirname, "preload.js"),
@@ -210,16 +213,15 @@ function createWindow() {
 /* ── System info ─────────────────────────────────────────────────────────── */
 function getSystemInfo() {
   try {
-    const model  = execSync('sysctl -n hw.model').toString().trim();
-    const cores  = execSync('sysctl -n hw.physicalcpu').toString().trim();
-    const mem    = execSync('sysctl -n hw.memsize').toString().trim();
-    const memGB  = Math.round(parseInt(mem) / 1073741824);
-    return {
-      model:  FRIENDLY_NAMES[model] || model,
-      chip:   CHIP_NAMES[model] || '',
-      cores,
-      memory: memGB + ' GB',
-    };
+    const raw = execSync('system_profiler SPHardwareDataType 2>/dev/null').toString();
+    const f = key => { const m = raw.match(new RegExp(`^\\s*${key}:\\s*(.+)$`, 'm')); return m ? m[1].trim() : null; };
+    const modelId  = f('Model Identifier');
+    const chip     = (f('Chip') || '').replace(/^Apple\s+/, '') || CHIP_NAMES[modelId] || '';
+    const model    = (modelId && FRIENDLY_NAMES[modelId]) ? FRIENDLY_NAMES[modelId] : (f('Model Name') || 'Mac');
+    const coresRaw = f('Total Number of Cores');
+    const cores    = coresRaw ? ((coresRaw.match(/^(\d+)/) || [])[1] || '?') : '?';
+    const memory   = f('Memory') || '?';
+    return { model, chip, cores, memory };
   } catch {
     return { model: 'Mac', chip: '', cores: '?', memory: '?' };
   }
@@ -237,7 +239,7 @@ function queryAndSend() {
   if (latest.ts === lastEntryTs) return;
   lastEntryTs = latest.ts;
   if (mainWindow && !mainWindow.isDestroyed()) {
-    mainWindow.webContents.send("log-update", { entries, sysInfo });
+    try { mainWindow.webContents.send("log-update", { entries, sysInfo }); } catch {}
   }
 }
 
@@ -259,8 +261,9 @@ app.whenReady().then(() => {
     queryAndSend();
   });
 
-  setInterval(logPowerState, 5000);   // log every 5s
-  setInterval(queryAndSend,  3000);   // push to renderer every 3s
+  logPowerState();                      // log immediately on start
+  setInterval(logPowerState, 60000);  // log every 60s
+  setInterval(queryAndSend,  5000);   // push to renderer every 5s
 });
 
 app.on("window-all-closed", () => {
