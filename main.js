@@ -1,14 +1,35 @@
-const { app, BrowserWindow } = require("electron");
+const { app, BrowserWindow, nativeTheme, Menu, ipcMain } = require("electron");
 const Database = require("better-sqlite3");
 const { join } = require("path");
 const { homedir } = require("os");
 const { execSync } = require("child_process");
 const fs = require("fs");
 
-const DB_PATH = join(homedir(), ".local", "power.db");
+const DB_PATH = join(homedir(), ".local", "powermon.db");
 
 let mainWindow;
 let db;
+
+/* ── Settings ────────────────────────────────────────────────────────────── */
+const SETTINGS_DEFAULTS = { theme: 'system', timeRange: 0, windowBounds: { width: 920, height: 680 } };
+let settings = { ...SETTINGS_DEFAULTS };
+
+function settingsPath() { return join(app.getPath('userData'), 'settings.json'); }
+
+function loadSettings() {
+  try {
+    const p = settingsPath();
+    if (fs.existsSync(p)) settings = { ...SETTINGS_DEFAULTS, ...JSON.parse(fs.readFileSync(p, 'utf8')) };
+  } catch {}
+}
+
+function saveSettings() {
+  try {
+    const p = settingsPath();
+    fs.mkdirSync(join(p, '..'), { recursive: true });
+    fs.writeFileSync(p, JSON.stringify(settings, null, 2));
+  } catch (e) { console.error('Settings save failed:', e.message); }
+}
 
 /* ── Model / chip name tables ────────────────────────────────────────────── */
 const CHIP_NAMES = {
@@ -56,13 +77,10 @@ const FRIENDLY_NAMES = {
   'Mac13,1':  'Mac Studio', 'Mac13,2':  'Mac Studio',
 };
 
-/* ── Database ────────────────────────────────────────────────────────────── */
+/* ── Database (read-only) ────────────────────────────────────────────────── */
 function connectDb() {
   try {
-    const dir = join(homedir(), ".local");
-    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-    db = new Database(DB_PATH);
-    db.pragma("journal_mode = WAL");
+    db = new Database(DB_PATH, { readonly: true });
   } catch (e) {
     console.error("Failed to open DB:", e.message);
     return false;
@@ -70,98 +88,13 @@ function connectDb() {
   return true;
 }
 
-function ensureSchema() {
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS power_log (
-      id            INTEGER PRIMARY KEY AUTOINCREMENT,
-      ts            TEXT NOT NULL,
-      battery       INTEGER,
-      charging      INTEGER,
-      amperage      INTEGER,
-      voltage       INTEGER,
-      time_remaining TEXT,
-      processdetails TEXT
-    )
-  `);
-}
-
-/* ── Power logger ────────────────────────────────────────────────────────── */
-function logPowerState() {
-  if (!db) return;
-  try {
-    // Battery % + charging state + time remaining via pmset (same as Python logger)
-    const pmset = execSync('pmset -g batt 2>/dev/null').toString();
-    let battery = null, charging = false, timeRemaining = null;
-    for (const line of pmset.split('\n')) {
-      if (!line.includes('InternalBattery')) continue;
-      const bm = line.match(/(\d+)%/);
-      if (bm) battery = parseInt(bm[1]);
-      charging = line.includes('AC Power');
-      const tm = line.match(/(\d+):(\d+)\s+remaining/);
-      if (tm) timeRemaining = `${tm[1]}:${tm[2]}`;
-    }
-
-    // InstantAmperage + Voltage via ioreg (same as Python logger)
-    // InstantAmperage is an unsigned 64-bit int — wrap to signed like Python does:
-    // if val > 2**63: val -= 2**64
-    const ioreg = execSync('ioreg -rn AppleSmartBattery 2>/dev/null').toString();
-    let amperage = null, voltage = null;
-    for (const line of ioreg.split('\n')) {
-      if (line.includes('"InstantAmperage"') && amperage === null) {
-        const m = line.split('=');
-        if (m.length >= 2) {
-          let val = BigInt(m[m.length - 1].trim());
-          if (val > BigInt('9223372036854775807')) val -= BigInt('18446744073709551616');
-          amperage = Number(val);
-        }
-      } else if (line.includes('"Voltage"') && !line.includes('BatteryData') && voltage === null) {
-        const m = line.split('=');
-        if (m.length >= 2) voltage = parseInt(m[m.length - 1].trim());
-      }
-    }
-
-    if (battery === null || amperage === null || voltage === null) return;
-
-    // Top processes by CPU via ps (same as Python logger)
-    const psOut = execSync('ps -Ao pcpu,rss,comm -r 2>/dev/null').toString();
-    const seen = {}, processes = [];
-    for (const line of psOut.split('\n').slice(1)) {
-      const parts = line.trim().split(/\s+/);
-      if (parts.length < 3) continue;
-      const cpu = parseFloat(parts[0]);
-      const mem = parseInt(parts[1]);
-      let name = parts.slice(2).join(' ');
-      if (name.includes('/')) name = name.split('/').pop();
-      if (cpu >= 0.5 && mem >= 5000 && !seen[name] && processes.length < 10) {
-        seen[name] = true;
-        processes.push({ name, cpu: Math.round(cpu * 10) / 10 });
-      }
-    }
-
-    // Power assertions
-    const assertOut = execSync('pmset -g assertions 2>/dev/null').toString();
-    const assertions = [];
-    for (const line of assertOut.split('\n')) {
-      if (line.includes('→')) assertions.push(line.trim());
-    }
-
-    db.prepare(`
-      INSERT OR IGNORE INTO power_log (ts, battery, charging, amperage, voltage, time_remaining, processdetails)
-      VALUES (datetime('now','localtime'), ?, ?, ?, ?, ?, ?)
-    `).run(battery, charging ? 1 : 0, amperage, voltage, timeRemaining,
-        JSON.stringify({ processes, assertions: assertions.slice(0, 5) }));
-
-  } catch (e) {
-    console.error("Logger error:", e.message);
-  }
-}
-
 /* ── Query entries ───────────────────────────────────────────────────────── */
 function queryEntries(limit = 3000) {
   if (!db) return [];
   try {
     const rows = db.prepare(`
-      SELECT ts, battery, charging, amperage, voltage, time_remaining, processdetails
+      SELECT ts, battery, charging, amperage, voltage,
+             time_remaining_mins, processdetails
       FROM power_log
       ORDER BY ts DESC
       LIMIT ?
@@ -170,16 +103,32 @@ function queryEntries(limit = 3000) {
     return rows.map(row => {
       let pd = {};
       try { pd = JSON.parse(row.processdetails || "{}"); } catch {}
-      const cpus = {};
-      (pd.processes || []).forEach(p => { if (p.name) cpus[p.name] = p.cpu || 0; });
+      const cpus = {}, mem = {};
+      (pd.processes || []).forEach(p => {
+        if (p.name) { cpus[p.name] = p.cpu || 0; mem[p.name] = p.mem || p.rss || 0; }
+      });
+
+      // Amperage stored as unsigned 64-bit — convert to signed
+      let amperage = row.amperage;
+      if (amperage !== null && amperage > 9223372036854775807) {
+        amperage = amperage - 18446744073709551616;
+      }
+
+      // time_remaining_mins (integer) → "H:MM" string for renderer
+      const mins = row.time_remaining_mins;
+      const timeLeft = mins != null
+        ? `${Math.floor(mins / 60)}:${String(mins % 60).padStart(2, '0')}`
+        : null;
+
       return {
-        ts:        row.ts,
-        battery:   row.battery,
-        charging:  !!row.charging,
-        amperage:  row.amperage,
-        voltage:   row.voltage,
+        ts:       row.ts,
+        battery:  row.battery,
+        charging: !!row.charging,
+        amperage,
+        voltage:  row.voltage,
         cpus,
-        timeLeft:  row.time_remaining,
+        mem,
+        timeLeft,
         assertions: pd.assertions || [],
       };
     }).reverse();
@@ -189,25 +138,82 @@ function queryEntries(limit = 3000) {
   }
 }
 
+/* ── App menu ────────────────────────────────────────────────────────────── */
+function buildMenu() {
+  const setTheme = (mode) => {
+    settings.theme = mode;
+    saveSettings();
+    nativeTheme.themeSource = mode;
+  };
+  const t = settings.theme;
+  const template = [
+    {
+      label: 'PowerMonitor',
+      submenu: [
+        { role: 'about' },
+        { type: 'separator' },
+        { role: 'services' },
+        { type: 'separator' },
+        { role: 'hide' },
+        { role: 'hideOthers' },
+        { role: 'unhide' },
+        { type: 'separator' },
+        { role: 'quit' },
+      ],
+    },
+    {
+      label: 'View',
+      submenu: [
+        {
+          label: 'Theme',
+          submenu: [
+            { label: 'System', type: 'radio', checked: t === 'system', click: () => setTheme('system') },
+            { label: 'Light',  type: 'radio', checked: t === 'light',  click: () => setTheme('light')  },
+            { label: 'Dark',   type: 'radio', checked: t === 'dark',   click: () => setTheme('dark')   },
+          ],
+        },
+      ],
+    },
+    { label: 'Window', role: 'windowMenu' },
+  ];
+  Menu.setApplicationMenu(Menu.buildFromTemplate(template));
+}
+
 /* ── Window ──────────────────────────────────────────────────────────────── */
 function createWindow() {
-  mainWindow = new BrowserWindow({
-    width: 920,
-    height: 680,
+  const b = settings.windowBounds || {};
+  const opts = {
+    width:    b.width  || 920,
+    height:   b.height || 680,
     minWidth: 800,
     minHeight: 560,
     titleBarStyle: 'hiddenInset',
     trafficLightPosition: { x: 16, y: 16 },
-    backgroundColor: '#1C1C1E',
+    backgroundColor: nativeTheme.shouldUseDarkColors ? '#0A0A0A' : '#F5F5F7',
     icon: join(__dirname, "icons", "mac", "icon.icns"),
     webPreferences: {
       preload: join(__dirname, "preload.js"),
       contextIsolation: true,
       nodeIntegration: false,
     },
-  });
+  };
+  if (typeof b.x === 'number' && typeof b.y === 'number') { opts.x = b.x; opts.y = b.y; }
+  mainWindow = new BrowserWindow(opts);
   mainWindow.loadFile(join(__dirname, "src", "index.html"));
-  mainWindow.on("closed", () => { mainWindow = null; });
+
+  let boundsTimer;
+  const saveBounds = () => {
+    clearTimeout(boundsTimer);
+    boundsTimer = setTimeout(() => {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        settings.windowBounds = mainWindow.getBounds();
+        saveSettings();
+      }
+    }, 500);
+  };
+  mainWindow.on('resize', saveBounds);
+  mainWindow.on('move',   saveBounds);
+  mainWindow.on('closed', () => { mainWindow = null; });
 }
 
 /* ── System info ─────────────────────────────────────────────────────────── */
@@ -227,6 +233,17 @@ function getSystemInfo() {
   }
 }
 
+/* ── Free memory ─────────────────────────────────────────────────────────── */
+function getMemFree() {
+  try {
+    const vmstat = execSync('vm_stat 2>/dev/null').toString();
+    const free     = parseInt(vmstat.match(/Pages free:\s+(\d+)/)?.[1]     || 0);
+    const inactive = parseInt(vmstat.match(/Pages inactive:\s+(\d+)/)?.[1] || 0);
+    const mb = Math.round((free + inactive) * 4096 / 1048576);
+    return mb >= 1024 ? (mb / 1024).toFixed(1) + ' GB' : mb + ' MB';
+  } catch { return null; }
+}
+
 /* ── Send to renderer ────────────────────────────────────────────────────── */
 let lastEntryTs = null;
 let sysInfo = null;
@@ -239,7 +256,10 @@ function queryAndSend() {
   if (latest.ts === lastEntryTs) return;
   lastEntryTs = latest.ts;
   if (mainWindow && !mainWindow.isDestroyed()) {
-    try { mainWindow.webContents.send("log-update", { entries, sysInfo }); } catch {}
+    try {
+      const info = sysInfo ? { ...sysInfo, memFree: getMemFree() } : null;
+      mainWindow.webContents.send("log-update", { entries, sysInfo: info });
+    } catch {}
   }
 }
 
@@ -247,23 +267,39 @@ function queryAndSend() {
 app.setName("PowerMonitor");
 
 app.whenReady().then(() => {
+  loadSettings();
+  nativeTheme.themeSource = settings.theme;
+
   if (!connectDb()) {
     console.error("Could not connect to database");
     return;
   }
 
-  ensureSchema();
   sysInfo = getSystemInfo();
+  buildMenu();
   createWindow();
 
+  nativeTheme.on('updated', () => {
+    buildMenu();
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      try { mainWindow.webContents.send('theme-changed', { isDark: nativeTheme.shouldUseDarkColors }); } catch {}
+    }
+  });
+
+  ipcMain.on('set-time-range', (_, min) => {
+    settings.timeRange = min;
+    saveSettings();
+  });
+
   mainWindow.webContents.once('did-finish-load', () => {
-    logPowerState();   // log immediately so first-run has data right away
+    mainWindow.webContents.send('settings', {
+      isDark:    nativeTheme.shouldUseDarkColors,
+      timeRange: settings.timeRange,
+    });
     queryAndSend();
   });
 
-  logPowerState();                      // log immediately on start
-  setInterval(logPowerState, 60000);  // log every 60s
-  setInterval(queryAndSend,  5000);   // push to renderer every 5s
+  setInterval(queryAndSend, 5000);
 });
 
 app.on("window-all-closed", () => {

@@ -39,24 +39,25 @@ function interestingAssertions(list) {
 }
 
 /* ── Theme ───────────────────────────────────────────────────────────────────*/
-(function initTheme() {
-  const saved = localStorage.getItem('theme');
-  if (saved) {
-    document.documentElement.setAttribute('data-theme', saved);
-  } else if (window.matchMedia('(prefers-color-scheme: light)').matches) {
-    document.documentElement.setAttribute('data-theme', 'light');
-  } else {
-    document.documentElement.setAttribute('data-theme', 'dark');
-  }
-})();
+function applyTheme(isDark) {
+  document.documentElement.setAttribute('data-theme', isDark ? 'dark' : 'light');
+}
 
-document.getElementById('theme-toggle').addEventListener('click', () => {
-  const current = document.documentElement.getAttribute('data-theme');
-  const next = current === 'light' ? 'dark' : 'light';
-  document.documentElement.setAttribute('data-theme', next);
-  localStorage.setItem('theme', next);
-  render();
-});
+if (window.api && window.api.onThemeChanged) {
+  window.api.onThemeChanged(({ isDark }) => { applyTheme(isDark); render(); });
+}
+
+if (window.api && window.api.onSettings) {
+  window.api.onSettings(({ isDark, timeRange }) => {
+    applyTheme(isDark);
+    const btn = document.querySelector(`.range-btn[data-min="${timeRange}"]`);
+    if (btn) {
+      document.querySelectorAll('.range-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      state.windowMs = timeRange * 60000;
+    }
+  });
+}
 
 function getVar(name) {
   return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
@@ -236,7 +237,7 @@ function drawBattery(entries) {
   const vals = V.map(e => e.battery);
   const fmt = e => new Date(e.ts).toLocaleTimeString([], { hour:'2-digit', minute:'2-digit' });
   document.getElementById('batt-range').textContent =
-    `${fmt(V[0])} – ${fmt(V[V.length-1])}  ·  H: ${Math.max(...vals)}%  L: ${Math.min(...vals)}%`;
+    `H: ${Math.max(...vals)}%  L: ${Math.min(...vals)}%`;
 }
 
 /* ── Chart: Power Draw ───────────────────────────────────────────────────────*/
@@ -291,63 +292,67 @@ function drawWatts(entries) {
   if (!labeled.has(li))
     ctx.fillText(new Date(WE[li].ts).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'}), xOf(WE[li]), h-6);
 
-  // Pre-smooth Y positions (keep original .watts for color decisions)
-  const wRaw  = WE.map((e, i) => [xOf(e), yOf(e.watts)]);
-  const wSmooth = smoothData(wRaw, 3);
-  const syOf  = i => wSmooth[i][1];
+  const pts  = WE.map(e => [xOf(e), yOf(e.watts)]);
+  const spts = smoothData(pts, 3);
 
-  // Area fills per segment
-  for (let i = 1; i < WE.length; i++) {
-    const p = WE[i-1], c = WE[i];
+  const drawFill = (color, clipY, clipH) => {
+    ctx.save();
+    ctx.beginPath(); ctx.rect(pL, clipY, cw, clipH); ctx.clip();
     ctx.beginPath();
-    ctx.moveTo(xOf(p), syOf(i-1)); ctx.lineTo(xOf(c), syOf(i));
-    ctx.lineTo(xOf(c), yZero); ctx.lineTo(xOf(p), yZero);
+    ctx.moveTo(spts[0][0], yZero);
+    ctx.lineTo(spts[0][0], spts[0][1]);
+    smoothPath(ctx, spts);
+    ctx.lineTo(spts[spts.length-1][0], yZero);
     ctx.closePath();
-    ctx.fillStyle = (p.watts + c.watts)/2 >= 0
-      ? 'rgba(50,215,75,0.15)' : 'rgba(255,159,10,0.15)';
-    ctx.fill();
-  }
+    ctx.fillStyle = color; ctx.fill();
+    ctx.restore();
+  };
+  drawFill('rgba(50,215,75,0.15)',  pT,    yZero - pT);
+  drawFill('rgba(255,159,10,0.15)', yZero, pT + ch - yZero);
 
-  // Line — color per segment with bezier smoothing over smoothed Y
-  for (let i = 1; i < WE.length; i++) {
-    const i0 = Math.max(i-2, 0), i3 = Math.min(i+1, WE.length-1);
-    const p0 = WE[i0], p1 = WE[i-1], p2 = WE[i], p3 = WE[i3];
-    const tension = 0.4;
-    const cp1x = xOf(p1) + (xOf(p2) - xOf(p0)) * tension;
-    const cp1y = syOf(i-1) + (syOf(i) - syOf(i0)) * tension;
-    const cp2x = xOf(p2) - (xOf(p3) - xOf(p1)) * tension;
-    const cp2y = syOf(i)   - (syOf(i3) - syOf(i-1)) * tension;
+  const drawLine = (color, clipY, clipH) => {
+    ctx.save();
+    ctx.beginPath(); ctx.rect(pL, clipY, cw, clipH); ctx.clip();
     ctx.beginPath();
-    ctx.moveTo(xOf(p1), syOf(i-1));
-    ctx.bezierCurveTo(cp1x, cp1y, cp2x, cp2y, xOf(p2), syOf(i));
-    ctx.strokeStyle = (p1.watts + p2.watts)/2 >= 0 ? '#32D74B' : '#FF9F0A';
-    ctx.lineWidth = 2.5; ctx.lineJoin = 'round'; ctx.lineCap = 'round'; ctx.stroke();
-  }
+    ctx.moveTo(spts[0][0], spts[0][1]);
+    smoothPath(ctx, spts);
+    ctx.strokeStyle = color; ctx.lineWidth = 2.5;
+    ctx.lineJoin = 'round'; ctx.lineCap = 'round'; ctx.stroke();
+    ctx.restore();
+  };
+  drawLine('#32D74B', pT,    yZero - pT);
+  drawLine('#FF9F0A', yZero, pT + ch - yZero);
 
   const avg = allW.reduce((a,b) => a+b, 0) / allW.length;
   const peak = Math.max(...allW.map(Math.abs));
   const fmt = e => new Date(e.ts).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'});
   document.getElementById('watts-range').textContent =
-    `${fmt(WE[0])} – ${fmt(WE[WE.length-1])}  ·  Avg: ${Math.abs(avg).toFixed(1)}W  Peak: ${peak.toFixed(1)}W`;
+    `Avg: ${Math.abs(avg).toFixed(1)}W  Peak: ${peak.toFixed(1)}W`;
 }
 
 /* ── Chart: CPU ──────────────────────────────────────────────────────────────*/
 let hoveredProcess = null;
 
 function drawCpu(entries) {
-  const V = lttb(applyWindow(entries), 200);
+  const windowed = applyWindow(entries);
+  if (windowed.length < 2) return;
+
+  // Rank processes by total CPU across ALL windowed entries (not lttb-reduced),
+  // so a process that spiked briefly is still captured and shown.
+  const tot = {};
+  let mx = 10;
+  windowed.forEach(e => Object.entries(e.cpus).forEach(([k, v]) => {
+    tot[k] = (tot[k] || 0) + v;
+    mx = Math.max(mx, v);
+  }));
+  const procs = Object.keys(tot).sort((a,b) => tot[b]-tot[a]).slice(0, 10);
+
+  // Downsample for smooth rendering
+  const V = lttb(windowed, 200);
   if (V.length < 2) return;
   const { ctx, w, h } = initCanvas('cpu-canvas');
   const { top: pT, right: pR, bottom: pB, left: pL } = PAD;
   ctx.clearRect(0, 0, w, h);
-
-  const tot = {};
-  let mx = 10;
-  V.forEach(e => Object.entries(e.cpus).forEach(([k, v]) => {
-    tot[k] = (tot[k] || 0) + v;
-    mx = Math.max(mx, v);
-  }));
-  const procs = Object.keys(tot).sort((a,b) => tot[b]-tot[a]).slice(0, 9);
   if (!procs.length) return;
 
   const yMax = Math.min(100, Math.ceil(mx / 10) * 10) || 10;
@@ -434,7 +439,7 @@ function drawCpu(entries) {
   };
 
   const fmt = e => new Date(e.ts).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'});
-  document.getElementById('cpu-range').textContent = `${fmt(V[0])} – ${fmt(V[V.length-1])}`;
+  document.getElementById('cpu-range').textContent = '';
   document.getElementById('cpu-empty').classList.add('hidden');
 }
 
@@ -458,49 +463,54 @@ function renderSidebar() {
   // Battery %
   document.getElementById('sb-batt-num').textContent = l.battery + '%';
 
-  // Status pill
+  // Status dot + text
   const isCharging = l.amperage != null && l.amperage > 0;
   const stateEl = document.getElementById('sb-state');
-  stateEl.textContent = isCharging ? '⚡ Charging' : 'On Battery';
-  stateEl.className = 'battery-status ' + (isCharging ? 'charging' : 'discharging');
+  stateEl.querySelector('.state-text').textContent = isCharging ? 'Charging' : 'On Battery';
+  stateEl.className = 'battery-state ' + (isCharging ? 'charging' : 'discharging');
 
   // Time left
   const tl = document.getElementById('sb-timeleft');
+  const tlLabel = document.getElementById('sb-timeleft-label');
   if (l.timeLeft) {
     const [hh, mm] = l.timeLeft.split(':').map(Number);
     tl.textContent = hh > 0 ? `${hh}h ${mm}m` : `${mm}m`;
+    tlLabel.textContent = isCharging ? 'until full' : 'remaining';
     tl.style.color = isCharging ? 'var(--color-green)'
       : hh < 1 ? 'var(--color-red)' : hh < 3 ? 'var(--color-orange)' : 'var(--text-primary)';
   } else {
     tl.textContent = '—';
+    tlLabel.textContent = isCharging ? 'until full' : 'remaining';
     tl.style.color = 'var(--text-tertiary)';
   }
 
   // Watts
   const wv = document.getElementById('sb-watts');
+  const wvLabel = document.getElementById('sb-watts-label');
   if (l.amperage != null && l.voltage != null) {
     const watts = (l.amperage * l.voltage) / 1e6;
-    wv.textContent = (watts >= 0 ? '+' : '') + watts.toFixed(1) + 'W';
+    wv.textContent = Math.abs(watts).toFixed(1) + 'W';
     wv.style.color = watts >= 0 ? 'var(--color-green)' : 'var(--color-orange)';
+    wvLabel.textContent = watts >= 0 ? 'charging' : 'discharging';
+    wvLabel.style.color = '';
   } else {
     wv.textContent = '—';
     wv.style.color = 'var(--text-tertiary)';
+    wvLabel.textContent = '—';
+    wvLabel.style.color = '';
   }
 
-  renderProcessList(l.cpus);
+  renderProcessList(l.cpus, l.mem || {});
   renderAssertions(l.assertions);
-
-  // Header subtitle
-  const fmt = d => new Date(d).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'});
-  const d0 = new Date(entries[0].ts), d1 = new Date(entries[entries.length-1].ts);
-  const sameDay = d0.toDateString() === d1.toDateString();
-  const dateStr = sameDay
-    ? d0.toLocaleDateString([],{month:'short',day:'numeric'})
-    : `${d0.toLocaleDateString([],{month:'short',day:'numeric'})} – ${d1.toLocaleDateString([],{month:'short',day:'numeric'})}`;
-  document.getElementById('main-sub').textContent = `${dateStr}  ${fmt(entries[0].ts)} – ${fmt(entries[entries.length-1].ts)}`;
 }
 
-function renderProcessList(cpus) {
+function formatMem(kb) {
+  if (kb >= 1048576) return (kb / 1048576).toFixed(1) + 'GB';
+  if (kb >= 1024) return Math.round(kb / 1024) + 'MB';
+  return kb + 'KB';
+}
+
+function renderProcessList(cpus, mem = {}) {
   const sorted = Object.entries(cpus).sort((a,b) => b[1]-a[1]).slice(0, 8);
   const maxCpu = sorted.length ? sorted[0][1] : 1;
 
@@ -513,13 +523,15 @@ function renderProcessList(cpus) {
   document.getElementById('proc-list').innerHTML = sorted.map(([name, cpu]) => {
     const c = procColor(name);
     const barW = maxCpu > 0 ? round((cpu / maxCpu) * 100) : 0;
+    const rss = mem[name];
+    const memStr = rss ? formatMem(rss) : '';
     return `<div class="process-item">
       <span class="process-dot" style="background:${c}"></span>
       <span class="process-name">${name}</span>
-      <div class="process-bar-container">
-        <div class="process-bar-fill" style="width:${barW}%;background:${c}"></div>
-      </div>
-      <span class="process-cpu">${cpu.toFixed(1)}%</span>
+      <span class="process-stat">
+        <span class="process-cpu">${cpu.toFixed(1)}%</span>
+        <span class="process-mem">${memStr}</span>
+      </span>
     </div>`;
   }).join('');
 }
@@ -546,10 +558,6 @@ function render() {
   drawWatts(E);
   drawCpu(E);
 
-  const now = new Date();
-  document.getElementById('last-update').textContent =
-    'Updated ' + now.toLocaleTimeString([],{hour:'2-digit',minute:'2-digit',second:'2-digit'});
-  document.getElementById('updated-sep').style.display = '';
 }
 
 /* ── Data listener ───────────────────────────────────────────────────────────*/
@@ -558,22 +566,21 @@ if (window.api && window.api.onLogUpdate) {
     state.allEntries = data.entries || data;
     if (data.sysInfo) {
       state.sysInfo = data.sysInfo;
-      const el = document.getElementById('main-title');
-      el.textContent = data.sysInfo.chip
-        ? `${data.sysInfo.model} (${data.sysInfo.chip})`
-        : data.sysInfo.model;
-      // Populate sysinfo panel (sidebar)
       const si = data.sysInfo;
+      document.getElementById('main-title').textContent =
+        si.chip ? `${si.model} ${si.chip}` : si.model || 'MacBook';
+      // Populate sysinfo panel (sidebar)
       document.getElementById('si-model').textContent = si.model  || '—';
       document.getElementById('si-chip').textContent  = si.chip   || '—';
       document.getElementById('si-cores').textContent = si.cores ? si.cores + ' cores' : '—';
       document.getElementById('si-mem').textContent   = si.memory || '—';
       // Populate model-name hover tooltip
+      const memLabel = si.memFree ? `${si.memFree} free · ${si.memory}` : (si.memory || '—');
       document.getElementById('mt-body').innerHTML = [
         ['Model',  si.model  || '—'],
         ['Chip',   si.chip   || '—'],
         ['Cores',  si.cores  ? si.cores + ' cores' : '—'],
-        ['Memory', si.memory || '—'],
+        ['Memory', memLabel],
       ].map(([k, v]) =>
         `<div class="tt-row"><span class="tt-label">${k}</span><span class="tooltip-value">${v}</span></div>`
       ).join('');
@@ -588,7 +595,9 @@ document.getElementById('range-bar').addEventListener('click', e => {
   if (!btn) return;
   document.querySelectorAll('.range-btn').forEach(b => b.classList.remove('active'));
   btn.classList.add('active');
-  state.windowMs = parseInt(btn.dataset.min) * 60000;
+  const min = parseInt(btn.dataset.min);
+  state.windowMs = min * 60000;
+  if (window.api && window.api.setTimeRange) window.api.setTimeRange(min);
   render();
 });
 
@@ -697,14 +706,6 @@ setupHover();
   trigger.addEventListener('mouseleave', () => { panel.style.display = 'none'; });
 })();
 
-/* ── Sysinfo panel (CPU legend → hover) ─────────────────────────────────────*/
-(function setupSysInfoPanel() {
-  const section = document.querySelector('.processes-section');
-  const panel   = document.getElementById('sysinfo-panel');
-  if (!section || !panel) return;
-  section.addEventListener('mouseenter', () => { panel.style.display = 'flex'; });
-  section.addEventListener('mouseleave', () => { panel.style.display = 'none'; });
-})();
 
 /* ── Chart expand/collapse (overlay mode) ────────────────────────────────────*/
 (function setupChartExpand() {

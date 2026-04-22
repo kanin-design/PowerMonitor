@@ -1,7 +1,8 @@
 const { contextBridge, ipcRenderer } = require("electron");
 
 contextBridge.exposeInMainWorld("api", {
-  onLogUpdate: (callback) => {
-    ipcRenderer.on("log-update", (_event, data) => callback(data));
-  },
+  onLogUpdate:    (cb) => ipcRenderer.on("log-update",    (_e, d) => cb(d)),
+  onThemeChanged: (cb) => ipcRenderer.on("theme-changed", (_e, d) => cb(d)),
+  onSettings:     (cb) => ipcRenderer.on("settings",      (_e, d) => cb(d)),
+  setTimeRange:   (min) => ipcRenderer.send("set-time-range", min),
 });

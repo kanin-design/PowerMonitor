@@ -1,19 +1,19 @@
 /* ── Design tokens ─────────────────────────────────────────────────────────── */
 :root {
-  --bg-primary:    #1C1C1E;
-  --bg-secondary:  #2C2C2E;
-  --bg-tertiary:   #3A3A3C;
-  --bg-quaternary: #48484A;
+  --bg-primary:    #0A0A0A;
+  --bg-secondary:  #141414;
+  --bg-tertiary:   #1E1E1E;
+  --bg-quaternary: #262626;
 
-  --text-primary:    #FFFFFF;
-  --text-secondary:  rgba(255,255,255,0.85);
-  --text-tertiary:   rgba(255,255,255,0.55);
-  --text-quaternary: rgba(255,255,255,0.25);
+  --text-primary:    #E8E8E8;
+  --text-secondary:  rgba(232,232,232,0.80);
+  --text-tertiary:   rgba(232,232,232,0.45);
+  --text-quaternary: rgba(232,232,232,0.20);
 
   --color-green:      #32D74B;
-  --color-green-dim:  rgba(50,215,75,0.15);
+  --color-green-dim:  rgba(50,215,75,0.12);
   --color-orange:     #FF9F0A;
-  --color-orange-dim: rgba(255,159,10,0.15);
+  --color-orange-dim: rgba(255,159,10,0.12);
   --color-red:        #FF453A;
   --color-blue:       #0A84FF;
   --color-purple:     #BF5AF2;
@@ -22,9 +22,9 @@
   --color-pink:       #FF375F;
   --color-brown:      #A2845E;
 
-  --border-subtle:   rgba(255,255,255,0.06);
-  --border-standard: rgba(255,255,255,0.10);
-  --border-strong:   rgba(255,255,255,0.18);
+  --border-subtle:   rgba(255,255,255,0.04);
+  --border-standard: rgba(255,255,255,0.08);
+  --border-strong:   rgba(255,255,255,0.14);
 
   --shadow-sm: 0 1px 2px rgba(0,0,0,0.2);
   --shadow-md: 0 4px 12px rgba(0,0,0,0.3);
@@ -97,6 +97,7 @@ html, body {
    SIDEBAR
    ════════════════════════════════════════════════════════════════════════════ */
 .sidebar {
+  position: relative;
   width: var(--sidebar-width);
   min-width: var(--sidebar-width);
   max-width: var(--sidebar-width);
@@ -109,6 +110,15 @@ html, body {
   overflow-y: auto;
   overflow-x: hidden;
   transition: background-color 0.2s ease, border-color 0.2s ease;
+}
+
+.sidebar::before {
+  content: '';
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  height: 52px;
+  -webkit-app-region: drag;
+  z-index: 1;
 }
 
 /* ── Battery hero ────────────────────────────────────────────────────────────*/
@@ -136,64 +146,60 @@ html, body {
   font-variant-numeric: tabular-nums;
 }
 
-.battery-status {
-  font-size: 13px;
-  font-weight: 400;
-  padding: 5px 14px;
-  border-radius: 20px;
-  background: var(--bg-tertiary);
+.battery-state {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
   color: var(--text-tertiary);
-  transition: all 0.2s ease;
+  transition: color 0.2s ease;
 }
 
-.battery-status.charging {
-  color: var(--color-green);
-  background: var(--color-green-dim);
+.state-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--text-quaternary);
+  flex-shrink: 0;
+  transition: background 0.2s ease;
 }
 
-.battery-status.discharging {
-  color: var(--color-orange);
-  background: var(--color-orange-dim);
-}
+.battery-state.charging { color: var(--color-green); }
+.battery-state.charging .state-dot { background: var(--color-green); }
+.battery-state.discharging .state-dot { background: var(--color-orange); }
 
-/* ── Stat chips ─────────────────────────────────────────────────────────────*/
-.stats-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: var(--space-2);
-}
-
-.stat-box {
+/* ── Status block ───────────────────────────────────────────────────────────*/
+.status-block {
   background: var(--bg-tertiary);
-  border: 1px solid var(--border-subtle);
   border-radius: 10px;
-  padding: var(--space-4) var(--space-3);
-  text-align: center;
+  overflow: hidden;
+}
+
+.status-row {
   display: flex;
   flex-direction: column;
-  gap: var(--space-1);
-  transition: all 0.15s ease;
+  gap: 4px;
+  padding: 12px 14px;
 }
 
-.stat-box:hover {
-  background: var(--bg-quaternary);
-  transform: translateY(-1px);
+.status-row + .status-row {
+  border-top: 1px solid var(--border-subtle);
 }
 
-.stat-value {
-  font-size: 18px;
-  font-weight: 500;
+.status-main-value {
+  font-size: 22px;
+  font-weight: 300;
   font-variant-numeric: tabular-nums;
+  line-height: 1;
+  letter-spacing: -0.02em;
   color: var(--text-primary);
-  line-height: 1.2;
+  transition: color 0.2s ease;
 }
 
-.stat-label {
-  font-size: 10px;
-  font-weight: 400;
+.status-sub-label {
+  font-size: 11px;
   color: var(--text-tertiary);
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
+  font-weight: 400;
 }
 
 /* ── Processes ───────────────────────────────────────────────────────────────*/
@@ -248,31 +254,38 @@ html, body {
   white-space: nowrap;
 }
 
-.process-bar-container {
-  width: 40px;
-  height: 3px;
-  background: var(--border-subtle);
-  border-radius: 2px;
-  overflow: hidden;
+
+.process-stat {
+  position: relative;
+  width: 42px;
+  text-align: right;
   flex-shrink: 0;
 }
 
-.process-bar-fill {
-  height: 100%;
-  border-radius: 2px;
-  transition: width 0.3s ease;
-}
-
 .process-cpu {
-  width: 38px;
-  text-align: right;
   font-size: 11px;
   font-weight: 500;
   font-variant-numeric: tabular-nums;
   color: var(--text-tertiary);
-  flex-shrink: 0;
   font-family: var(--font-mono);
+  transition: opacity 0.15s ease;
 }
+
+.process-mem {
+  position: absolute;
+  right: 0;
+  top: 0;
+  font-size: 10px;
+  font-weight: 400;
+  color: var(--text-quaternary);
+  font-family: var(--font-mono);
+  white-space: nowrap;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+
+.process-item:hover .process-cpu { opacity: 0; }
+.process-item:hover .process-mem { opacity: 1; }
 
 /* ── Skeleton ────────────────────────────────────────────────────────────────*/
 .skeleton {
@@ -341,7 +354,7 @@ html, body {
   align-items: center;
   justify-content: space-between;
   padding: 0 var(--space-5);
-  padding-left: 80px; /* clear traffic lights */
+  padding-left: 40px;
   transition: background-color 0.2s ease, border-color 0.2s ease;
 }
 
@@ -354,10 +367,10 @@ html, body {
 }
 
 .model-name {
+  font-size: 13px;
   font-weight: 500;
   color: var(--text-primary);
   cursor: default;
-  -webkit-app-region: no-drag;
 }
 
 /* read-only text — inherit drag from parent so the bar is mostly draggable */
@@ -369,10 +382,13 @@ html, body {
   font-variant-numeric: tabular-nums;
 }
 
-.header-controls {
+.header-left {
   display: flex;
   align-items: center;
-  gap: var(--space-3);
+  gap: var(--space-2);
+}
+
+.range-control {
   -webkit-app-region: no-drag;
 }
 
@@ -416,32 +432,11 @@ html, body {
   box-shadow: 0 1px 3px rgba(0,0,0,0.15);
 }
 
-/* ── Theme toggle ────────────────────────────────────────────────────────────*/
-.theme-toggle {
-  width: 30px;
-  height: 30px;
-  border-radius: 8px;
-  border: 1px solid var(--border-standard);
-  background: var(--bg-tertiary);
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 13px;
-  transition: all 0.15s ease;
-  color: var(--text-primary);
-}
-
-.theme-toggle:hover { background: var(--bg-quaternary); }
-
-[data-theme="light"] .theme-icon-dark  { display: none; }
-[data-theme="dark"]  .theme-icon-light { display: none; }
-:root:not([data-theme="light"]) .theme-icon-light { display: none; }
 
 /* ── Charts container ────────────────────────────────────────────────────────*/
 .charts {
   flex: 1;
-  padding: var(--space-5) var(--space-5);
+  padding: var(--space-3) var(--space-5) var(--space-5);
   display: flex;
   flex-direction: column;
   gap: var(--space-4);
@@ -450,10 +445,11 @@ html, body {
   position: relative;
 }
 
+
 /* ── Chart cards ─────────────────────────────────────────────────────────────*/
 .chart-card {
   background: var(--bg-secondary);
-  border: 1px solid var(--border-subtle);
+  border: none;
   border-radius: 12px;
   padding: var(--space-5);
   display: flex;
@@ -698,8 +694,7 @@ html, body {
 
 /* ── Focus ───────────────────────────────────────────────────────────────────*/
 button:focus-visible, [tabindex]:focus-visible {
-  outline: 2px solid var(--color-blue);
-  outline-offset: 2px;
+  outline: none;
 }
 
 /* ── Reduced motion ──────────────────────────────────────────────────────────*/
