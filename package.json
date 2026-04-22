@@ -1,7 +1,10 @@
 {
   "name": "powermonitor",
-  "version": "0.0.1",
-  "description": "Desktop power monitor app",
+  "productName": "PowerMonitor",
+  "version": "1.0.0",
+  "description": "macOS power and battery monitor",
+  "author": "Stian Sønderlund <stiandehlin@gmail.com>",
+  "copyright": "Copyright © 2026 Stian Sønderlund",
   "main": "main.js",
   "scripts": {
     "start": "electron .",

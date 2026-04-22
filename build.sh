@@ -28,6 +28,9 @@ npx @electron/packager . PowerMonitor \
   --out=./release-builds \
   --app-version=$(node -p "require('./package.json').version") \
   --build-version=$(node -p "require('./package.json').version") \
+  --app-bundle-id=com.stiandehlin.powermonitor \
+  --app-copyright="$(node -p "require('./package.json').copyright")" \
+  --app-category-type=public.app-category.utilities \
   --icon=icons/mac/icon.icns
 
 # Check if build succeeded
