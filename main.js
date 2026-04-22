@@ -221,13 +221,46 @@ function getSystemInfo() {
   try {
     const raw = execSync('system_profiler SPHardwareDataType 2>/dev/null').toString();
     const f = key => { const m = raw.match(new RegExp(`^\\s*${key}:\\s*(.+)$`, 'm')); return m ? m[1].trim() : null; };
+
     const modelId  = f('Model Identifier');
     const chip     = (f('Chip') || '').replace(/^Apple\s+/, '') || CHIP_NAMES[modelId] || '';
     const model    = (modelId && FRIENDLY_NAMES[modelId]) ? FRIENDLY_NAMES[modelId] : (f('Model Name') || 'Mac');
+    const memory   = f('Memory') || '?';
+
+    // Core breakdown — M5 says "Super and Efficiency", older chips say "performance and efficiency"
     const coresRaw = f('Total Number of Cores');
     const cores    = coresRaw ? ((coresRaw.match(/^(\d+)/) || [])[1] || '?') : '?';
-    const memory   = f('Memory') || '?';
-    return { model, chip, cores, memory };
+    const pCores   = coresRaw ? ((coresRaw.match(/(\d+)\s+(?:Super|performance)/i) || [])[1] || null) : null;
+    const eCores   = coresRaw ? ((coresRaw.match(/(\d+)\s+(?:Efficiency)/i)        || [])[1] || null) : null;
+    const pLabel   = coresRaw && /Super/i.test(coresRaw) ? 'Super' : 'Performance';
+
+    // GPU cores via ioreg (fast, no subprocess overhead)
+    let gpuCores = null;
+    try {
+      const io = execSync('ioreg -r -c AGXAccelerator -d 1 2>/dev/null').toString();
+      const m  = io.match(/"gpu-core-count"\s*=\s*(\d+)/);
+      if (m) gpuCores = m[1];
+    } catch {}
+
+    // Battery health via system_profiler
+    let battHealth = {};
+    try {
+      const pwr = execSync('system_profiler SPPowerDataType 2>/dev/null').toString();
+      const fp  = key => { const m = pwr.match(new RegExp(`^\\s*${key}:\\s*(.+)$`, 'm')); return m ? m[1].trim() : null; };
+      battHealth = {
+        cycleCount:  fp('Cycle Count'),
+        condition:   fp('Condition'),
+        maxCapacity: (fp('Maximum Capacity') || '').replace(/\s+%$/, '%'),  // "100 %" → "100%"
+        fullCharge:  fp('Full Charge Capacity \\(mAh\\)'),
+        designCap:   fp('Battery Design Capacity \\(mAh\\)'),
+      };
+    } catch {}
+
+    // macOS version
+    let macOS = null;
+    try { macOS = execSync('sw_vers -productVersion 2>/dev/null').toString().trim(); } catch {}
+
+    return { model, chip, cores, pCores, eCores, pLabel, gpuCores, memory, battHealth, macOS };
   } catch {
     return { model: 'Mac', chip: '', cores: '?', memory: '?' };
   }
@@ -290,6 +323,8 @@ app.whenReady().then(() => {
     settings.timeRange = min;
     saveSettings();
   });
+
+  ipcMain.handle('get-mem-free', () => getMemFree());
 
   mainWindow.webContents.once('did-finish-load', () => {
     mainWindow.webContents.send('settings', {

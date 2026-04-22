@@ -47,6 +47,7 @@
           <div class="skeleton"></div>
           <div class="skeleton"></div>
         </div>
+        <div class="mem-free-row" id="sb-mem-free"></div>
       </section>
 
       <section class="sidebar-section" id="sb-asserts" style="display:none">
@@ -108,12 +109,6 @@
             <div class="chart-empty" id="cpu-empty">Awaiting data…</div>
           </div>
           <div class="legend" id="cpu-legend"></div>
-          <div class="sysinfo-panel" id="sysinfo-panel" style="display:none">
-            <div class="sysinfo-row"><span class="sysinfo-label">Model</span><span class="sysinfo-value" id="si-model">—</span></div>
-            <div class="sysinfo-row"><span class="sysinfo-label">Chip</span><span class="sysinfo-value" id="si-chip">—</span></div>
-            <div class="sysinfo-row"><span class="sysinfo-label">Cores</span><span class="sysinfo-value" id="si-cores">—</span></div>
-            <div class="sysinfo-row"><span class="sysinfo-label">Memory</span><span class="sysinfo-value" id="si-mem">—</span></div>
-          </div>
         </div>
 
       </div>
@@ -129,12 +124,7 @@
   </div>
 
   <!-- Model-name hover panel -->
-  <div class="tooltip" id="model-tooltip" style="display:none; pointer-events:none; position:fixed; z-index:1000">
-    <div class="tooltip-header">
-      <span class="tooltip-time">System Info</span>
-    </div>
-    <div class="tooltip-body" id="mt-body"></div>
-  </div>
+  <div class="si-panel" id="model-tooltip" style="display:none"></div>
 
   <script src="app.js"></script>
 </body>

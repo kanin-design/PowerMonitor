@@ -502,6 +502,12 @@ function renderSidebar() {
 
   renderProcessList(l.cpus, l.mem || {});
   renderAssertions(l.assertions);
+
+  // Free RAM below process list
+  const memFreeEl = document.getElementById('sb-mem-free');
+  if (memFreeEl && state.sysInfo && state.sysInfo.memFree) {
+    memFreeEl.textContent = state.sysInfo.memFree + ' free';
+  }
 }
 
 function formatMem(kb) {
@@ -568,22 +574,7 @@ if (window.api && window.api.onLogUpdate) {
       state.sysInfo = data.sysInfo;
       const si = data.sysInfo;
       document.getElementById('main-title').textContent =
-        si.chip ? `${si.model} ${si.chip}` : si.model || 'MacBook';
-      // Populate sysinfo panel (sidebar)
-      document.getElementById('si-model').textContent = si.model  || '—';
-      document.getElementById('si-chip').textContent  = si.chip   || '—';
-      document.getElementById('si-cores').textContent = si.cores ? si.cores + ' cores' : '—';
-      document.getElementById('si-mem').textContent   = si.memory || '—';
-      // Populate model-name hover tooltip
-      const memLabel = si.memFree ? `${si.memFree} free · ${si.memory}` : (si.memory || '—');
-      document.getElementById('mt-body').innerHTML = [
-        ['Model',  si.model  || '—'],
-        ['Chip',   si.chip   || '—'],
-        ['Cores',  si.cores  ? si.cores + ' cores' : '—'],
-        ['Memory', memLabel],
-      ].map(([k, v]) =>
-        `<div class="tt-row"><span class="tt-label">${k}</span><span class="tooltip-value">${v}</span></div>`
-      ).join('');
+        si.chip ? `${si.model} · ${si.chip}` : si.model || 'MacBook';
     }
     render();
   });
@@ -689,20 +680,102 @@ window.addEventListener('resize', () => { clearTimeout(resizeTimer); resizeTimer
 
 setupHover();
 
-/* ── Model-name hover tooltip ────────────────────────────────────────────────*/
+/* ── Model-name hover panel ──────────────────────────────────────────────────*/
+function buildSiPanel(si, memFree) {
+  if (!si) return '<div class="si-loading">Loading…</div>';
+
+  const row = (label, value, cls = '') =>
+    `<div class="si-row">
+       <span class="si-label">${label}</span>
+       <span class="si-value${cls ? ' ' + cls : ''}">${value}</span>
+     </div>`;
+
+  const div = (cls) => `<div class="${cls}"></div>`;
+
+  // CPU cores
+  let cpuVal = si.cores ? si.cores + ' cores' : '?';
+  if (si.pCores && si.eCores) {
+    const pl = si.pLabel || 'Performance';
+    cpuVal = `${si.pCores} ${pl} · ${si.eCores} Efficiency`;
+  }
+
+  // Battery health colour
+  const pct = si.battHealth && si.battHealth.maxCapacity
+    ? parseInt(si.battHealth.maxCapacity) : null;
+  const healthCls = pct === null ? '' : pct >= 85 ? 'si-green' : pct >= 70 ? 'si-orange' : 'si-red';
+
+  // RAM line: total always shown, free appended when available
+  const ramVal = memFree
+    ? `${si.memory} <span class="si-dim">· ${memFree} free</span>`
+    : si.memory || '?';
+
+  let html = `
+    <div class="si-head">
+      <div class="si-model-name">${si.model || 'Mac'}</div>
+      <div class="si-chip-name">Apple ${si.chip || ''}</div>
+    </div>
+    ${div('si-sep')}
+    <div class="si-section">
+      ${row('CPU', cpuVal)}
+      ${si.gpuCores ? row('GPU', si.gpuCores + ' cores') : ''}
+      ${row('RAM', ramVal)}
+    </div>`;
+
+  if (si.battHealth && (si.battHealth.maxCapacity || si.battHealth.cycleCount)) {
+    const b = si.battHealth;
+    html += `
+    ${div('si-sep')}
+    <div class="si-section si-section-label">Battery</div>
+    <div class="si-section">
+      ${b.maxCapacity ? row('Health', b.maxCapacity, healthCls) : ''}
+      ${b.cycleCount  ? row('Cycles', b.cycleCount)             : ''}
+      ${b.fullCharge && b.designCap
+          ? row('Capacity', `${parseInt(b.fullCharge).toLocaleString()} / ${parseInt(b.designCap).toLocaleString()} mAh`)
+          : ''}
+      ${b.condition   ? row('Condition', b.condition)           : ''}
+    </div>`;
+  }
+
+  if (si.macOS) {
+    html += `
+    ${div('si-sep')}
+    <div class="si-section">
+      ${row('macOS', si.macOS)}
+    </div>`;
+  }
+
+  return html;
+}
+
+function positionSiPanel(trigger, panel) {
+  const rect = trigger.getBoundingClientRect();
+  panel.style.left = Math.min(rect.left, window.innerWidth - panel.offsetWidth - 8) + 'px';
+  panel.style.top  = (rect.bottom + 8) + 'px';
+}
+
 (function setupModelTooltip() {
   const trigger = document.getElementById('main-title');
   const panel   = document.getElementById('model-tooltip');
   if (!trigger || !panel) return;
-  trigger.addEventListener('mouseenter', () => {
+
+  trigger.addEventListener('mouseenter', async () => {
+    // Show immediately with cached memFree
+    panel.innerHTML = buildSiPanel(state.sysInfo, state.sysInfo && state.sysInfo.memFree);
     panel.style.display = 'block';
-    const rect = trigger.getBoundingClientRect();
-    const pw   = panel.offsetWidth;
-    let left   = rect.left;
-    if (left + pw > window.innerWidth - 8) left = window.innerWidth - pw - 8;
-    panel.style.left = left + 'px';
-    panel.style.top  = (rect.bottom + 8) + 'px';
+    positionSiPanel(trigger, panel);
+
+    // Fetch a fresh memFree reading and update just that field
+    if (window.api && window.api.getMemFree) {
+      try {
+        const fresh = await window.api.getMemFree();
+        if (fresh && panel.style.display !== 'none') {
+          panel.innerHTML = buildSiPanel(state.sysInfo, fresh);
+          positionSiPanel(trigger, panel);
+        }
+      } catch {}
+    }
   });
+
   trigger.addEventListener('mouseleave', () => { panel.style.display = 'none'; });
 })();
 
