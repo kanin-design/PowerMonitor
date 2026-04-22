@@ -3,8 +3,8 @@
   "productName": "PowerMonitor",
   "version": "1.0.0",
   "description": "macOS power and battery monitor",
-  "author": "Stian Sønderlund <stiandehlin@gmail.com>",
-  "copyright": "Copyright © 2026 Stian Sønderlund",
+  "author": "Delfinsoft",
+  "copyright": "Copyright © 2026 Delfinsoft",
   "main": "main.js",
   "scripts": {
     "start": "electron .",
