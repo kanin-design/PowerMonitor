@@ -5,6 +5,10 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Power Monitor</title>
   <link rel="stylesheet" href="app.css" />
+  <script>
+    document.documentElement.setAttribute('data-theme',
+      window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark');
+  </script>
 </head>
 <body>
   <div class="app">
@@ -15,25 +19,27 @@
       <section class="sidebar-section battery-section">
         <div class="battery-display">
           <span class="battery-percent" id="sb-batt-num">—%</span>
-          <span class="battery-status" id="sb-state">—</span>
+          <div class="battery-state" id="sb-state">
+            <span class="state-dot"></span>
+            <span class="state-text">—</span>
+          </div>
         </div>
       </section>
 
       <section class="sidebar-section">
-        <div class="stats-grid">
-          <div class="stat-box">
-            <span class="stat-value" id="sb-timeleft">—</span>
-            <span class="stat-label">Time Left</span>
+        <div class="status-block">
+          <div class="status-row">
+            <span class="status-main-value" id="sb-timeleft">—</span>
+            <span class="status-sub-label" id="sb-timeleft-label">remaining</span>
           </div>
-          <div class="stat-box">
-            <span class="stat-value" id="sb-watts">—</span>
-            <span class="stat-label">Power</span>
+          <div class="status-row">
+            <span class="status-main-value" id="sb-watts">—</span>
+            <span class="status-sub-label" id="sb-watts-label">—</span>
           </div>
         </div>
       </section>
 
       <section class="sidebar-section processes-section">
-        <h3 class="section-header">Processes</h3>
         <div class="process-list" id="proc-list">
           <div class="skeleton"></div>
           <div class="skeleton"></div>
@@ -56,25 +62,15 @@
     <div class="content">
 
       <div class="titlebar-spacer">
-        <div class="header-info">
+        <div class="header-left">
           <span class="model-name" id="main-title">MacBook</span>
-          <span class="header-sep">·</span>
-          <span class="date-range" id="main-sub"></span>
-          <span class="header-sep" id="updated-sep" style="display:none">·</span>
-          <span class="updated" id="last-update"></span>
         </div>
-        <div class="header-controls">
-          <div class="range-control" id="range-bar">
-            <button class="range-btn" data-min="10">10m</button>
-            <button class="range-btn" data-min="60">1h</button>
-            <button class="range-btn" data-min="360">6h</button>
-            <button class="range-btn" data-min="1440">24h</button>
-            <button class="range-btn active" data-min="0">All</button>
-          </div>
-          <button class="theme-toggle" id="theme-toggle" aria-label="Toggle theme">
-            <span class="theme-icon-light">☀️</span>
-            <span class="theme-icon-dark">🌙</span>
-          </button>
+        <div class="range-control" id="range-bar">
+          <button class="range-btn" data-min="10">10m</button>
+          <button class="range-btn" data-min="60">1h</button>
+          <button class="range-btn" data-min="360">6h</button>
+          <button class="range-btn" data-min="1440">24h</button>
+          <button class="range-btn active" data-min="0">All</button>
         </div>
       </div>
 
