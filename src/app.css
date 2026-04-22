@@ -372,6 +372,7 @@ html, body {
   color: var(--text-primary);
   cursor: pointer;
   transition: color 0.15s ease;
+  -webkit-app-region: no-drag;
 }
 .model-name:hover { color: var(--color-blue); }
 
