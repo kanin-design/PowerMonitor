@@ -229,7 +229,7 @@ function createWindow() {
 /* ── System info ─────────────────────────────────────────────────────────── */
 function getSystemInfo() {
   try {
-    const raw = execSync('system_profiler SPHardwareDataType 2>/dev/null').toString();
+    const raw = execSync('system_profiler SPHardwareDataType 2>/dev/null', { timeout: 5000 }).toString();
     const f = key => { const m = raw.match(new RegExp(`^\\s*${key}:\\s*(.+)$`, 'm')); return m ? m[1].trim() : null; };
 
     const modelId  = f('Model Identifier');
@@ -247,7 +247,7 @@ function getSystemInfo() {
     // GPU cores via ioreg (fast, no subprocess overhead)
     let gpuCores = null;
     try {
-      const io = execSync('ioreg -r -c AGXAccelerator -d 1 2>/dev/null').toString();
+      const io = execSync('ioreg -r -c AGXAccelerator -d 1 2>/dev/null', { timeout: 3000 }).toString();
       const m  = io.match(/"gpu-core-count"\s*=\s*(\d+)/);
       if (m) gpuCores = m[1];
     } catch {}
@@ -255,7 +255,7 @@ function getSystemInfo() {
     // Battery health via system_profiler
     let battHealth = {};
     try {
-      const pwr = execSync('system_profiler SPPowerDataType 2>/dev/null').toString();
+      const pwr = execSync('system_profiler SPPowerDataType 2>/dev/null', { timeout: 5000 }).toString();
       const fp  = key => { const m = pwr.match(new RegExp(`^\\s*${key}:\\s*(.+)$`, 'm')); return m ? m[1].trim() : null; };
       battHealth = {
         cycleCount:  fp('Cycle Count'),
@@ -268,7 +268,7 @@ function getSystemInfo() {
 
     // macOS version
     let macOS = null;
-    try { macOS = execSync('sw_vers -productVersion 2>/dev/null').toString().trim(); } catch {}
+    try { macOS = execSync('sw_vers -productVersion 2>/dev/null', { timeout: 2000 }).toString().trim(); } catch {}
 
     return { model, chip, cores, pCores, eCores, pLabel, gpuCores, memory, battHealth, macOS };
   } catch {
@@ -279,7 +279,7 @@ function getSystemInfo() {
 /* ── Free memory ─────────────────────────────────────────────────────────── */
 function getMemFree() {
   try {
-    const vmstat = execSync('vm_stat 2>/dev/null').toString();
+    const vmstat = execSync('vm_stat 2>/dev/null', { timeout: 2000 }).toString();
     const free     = parseInt(vmstat.match(/Pages free:\s+(\d+)/)?.[1]     || 0);
     const inactive = parseInt(vmstat.match(/Pages inactive:\s+(\d+)/)?.[1] || 0);
     const mb = Math.round((free + inactive) * 4096 / 1048576);
@@ -316,7 +316,7 @@ function isLoggerCurrent() {
 }
 
 function writePlist() {
-  const resourcesPath = process.resourcesPath || join(__dirname, '..', 'Resources');
+  const resourcesPath = process.resourcesPath;
   const xml = `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -366,6 +366,10 @@ function closeSetupWindow() {
 }
 
 async function setupLogger() {
+  if (!app.isPackaged) {
+    console.log('powermonitor: dev mode — skipping logger auto-setup');
+    return;
+  }
   if (isLoggerCurrent()) return;
 
   showSetupWindow();
@@ -380,6 +384,10 @@ async function setupLogger() {
     fs.writeFileSync(LOGGER_DEST, loggerSrc, 'utf8');
     fs.chmodSync(LOGGER_DEST, 0o755);
 
+    // Validate the write succeeded before proceeding
+    if (!fs.existsSync(LOGGER_DEST))
+      throw new Error(`Failed to write logger to ${LOGGER_DEST}`);
+
     // Unload existing plist if present (upgrade path)
     if (fs.existsSync(PLIST_PATH)) {
       try { execSync(`launchctl unload "${PLIST_PATH}"`, { timeout: 5000 }); } catch {}
@@ -390,13 +398,12 @@ async function setupLogger() {
     execSync(`launchctl load "${PLIST_PATH}"`, { timeout: 5000 });
 
     // Run once immediately so DB/table exist before connectDb()
-    const resourcesPath = process.resourcesPath || join(__dirname, '..', 'Resources');
     execSync(`"${process.execPath}" "${LOGGER_DEST}"`, {
       timeout: 15000,
       env: {
         ...process.env,
         ELECTRON_RUN_AS_NODE: '1',
-        ELECTRON_RESOURCE_PATH: resourcesPath,
+        ELECTRON_RESOURCE_PATH: process.resourcesPath,
       },
     });
 

@@ -235,7 +235,6 @@ function drawBattery(entries) {
 
   document.getElementById('batt-empty').classList.add('hidden');
   const vals = V.map(e => e.battery);
-  const fmt = e => new Date(e.ts).toLocaleTimeString([], { hour:'2-digit', minute:'2-digit' });
   document.getElementById('batt-range').textContent =
     `H: ${Math.max(...vals)}%  L: ${Math.min(...vals)}%`;
 }
@@ -325,7 +324,6 @@ function drawWatts(entries) {
 
   const avg = allW.reduce((a,b) => a+b, 0) / allW.length;
   const peak = Math.max(...allW.map(Math.abs));
-  const fmt = e => new Date(e.ts).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'});
   document.getElementById('watts-range').textContent =
     `Avg: ${Math.abs(avg).toFixed(1)}W  Peak: ${peak.toFixed(1)}W`;
 }
@@ -438,7 +436,6 @@ function drawCpu(entries) {
     }
   };
 
-  const fmt = e => new Date(e.ts).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'});
   document.getElementById('cpu-range').textContent = '';
   document.getElementById('cpu-empty').classList.add('hidden');
 }

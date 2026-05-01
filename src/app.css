@@ -75,8 +75,6 @@ html, body {
   background: transparent;
   color: var(--text-primary);
   -webkit-font-smoothing: antialiased;
-  -webkit-user-select: none;
-  user-select: none;
   transition: background-color 0.2s ease, color 0.2s ease;
 }
 
@@ -692,19 +690,6 @@ html, body {
   color: var(--text-primary);
   font-weight: 500;
   font-variant-numeric: tabular-nums;
-}
-
-.tt-row {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 20px;
-  font-size: 12px;
-}
-
-.tt-label {
-  color: var(--text-secondary);
-  min-width: 52px;
 }
 
 .tt-charging    { color: var(--color-green); }
