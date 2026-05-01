@@ -189,7 +189,10 @@ function createWindow() {
     minHeight: 560,
     titleBarStyle: 'hiddenInset',
     trafficLightPosition: { x: 16, y: 16 },
-    backgroundColor: nativeTheme.shouldUseDarkColors ? '#0A0A0A' : '#F5F5F7',
+    vibrancy: 'under-window',
+    visualEffectState: 'active',
+    transparent: true,
+    backgroundColor: '#00000000',
     icon: join(__dirname, "icons", "mac", "icon.icns"),
     webPreferences: {
       preload: join(__dirname, "preload.js"),
