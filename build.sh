@@ -17,6 +17,22 @@ echo "Cleaning previous builds..."
 rm -rf "PowerMonitor-darwin-arm64"
 rm -rf "PowerMonitor*.dmg"
 
+# Rebuild native modules for Electron
+echo "Rebuilding native modules for Electron..."
+npx @electron/rebuild -f -w better-sqlite3
+
+# Ensure macmon binary is present
+echo "Copying macmon binary..."
+mkdir -p bin
+if [ ! -f bin/macmon ]; then
+  if [ -f /opt/homebrew/bin/macmon ]; then
+    cp /opt/homebrew/bin/macmon bin/macmon
+  else
+    echo "WARNING: macmon not found — temperature will be unavailable"
+  fi
+fi
+[ -f bin/macmon ] && chmod +x bin/macmon
+
 # Build the app using electron-packager
 echo "Building app with electron-packager..."
 npx @electron/packager . PowerMonitor \
@@ -25,6 +41,7 @@ npx @electron/packager . PowerMonitor \
   --overwrite \
   --prune=true \
   --asar \
+  --asar-unpack="**/*.node" \
   --out=./release-builds \
   --app-version=$(node -p "require('./package.json').version") \
   --build-version=$(node -p "require('./package.json').version") \
@@ -42,6 +59,13 @@ fi
 # Move the built app to expected location for backward compatibility
 mkdir -p "PowerMonitor-darwin-arm64"
 mv "release-builds/PowerMonitor-darwin-arm64/PowerMonitor.app" "PowerMonitor-darwin-arm64/PowerMonitor.app"
+
+# Manually unpack macmon binary (asar-unpack doesn't handle extensionless binaries reliably)
+echo "Unpacking macmon binary..."
+UNPACKED="PowerMonitor-darwin-arm64/PowerMonitor.app/Contents/Resources/app.asar.unpacked/bin"
+mkdir -p "$UNPACKED"
+cp "bin/macmon" "$UNPACKED/macmon"
+chmod +x "$UNPACKED/macmon"
 
 # Copy icon explicitly (sometimes packager misses it)
 echo "Ensuring icon is properly set..."

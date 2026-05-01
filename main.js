@@ -7,6 +7,13 @@ const fs = require("fs");
 
 const DB_PATH = join(homedir(), ".local", "powermon.db");
 
+/* ── Logger / LaunchAgent constants ─────────────────────────────────────── */
+const PLIST_LABEL  = 'com.delfinsoft.powermonitor';
+const PLIST_PATH   = join(homedir(), 'Library', 'LaunchAgents', `${PLIST_LABEL}.plist`);
+const LOGGER_DEST  = join(homedir(), '.local', 'bin', 'powermonitor-logger.js');
+const LOG_OUT      = join(homedir(), '.local', 'logs', 'powermonitor.log');
+const LOG_ERR      = join(homedir(), '.local', 'logs', 'powermonitor.err');
+
 let mainWindow;
 let db;
 
@@ -299,12 +306,116 @@ function queryAndSend() {
   }
 }
 
+/* ── Logger setup ────────────────────────────────────────────────────────── */
+function isLoggerCurrent() {
+  if (!fs.existsSync(PLIST_PATH)) return false;
+  try {
+    const content = fs.readFileSync(PLIST_PATH, 'utf8');
+    return content.includes(process.execPath) && content.includes(LOGGER_DEST);
+  } catch { return false; }
+}
+
+function writePlist() {
+  const resourcesPath = process.resourcesPath || join(__dirname, '..', 'Resources');
+  const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>${PLIST_LABEL}</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>${process.execPath}</string>
+        <string>${LOGGER_DEST}</string>
+    </array>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>ELECTRON_RUN_AS_NODE</key>
+        <string>1</string>
+        <key>ELECTRON_RESOURCE_PATH</key>
+        <string>${resourcesPath}</string>
+    </dict>
+    <key>StartInterval</key>
+    <integer>60</integer>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>StandardOutPath</key>
+    <string>${LOG_OUT}</string>
+    <key>StandardErrorPath</key>
+    <string>${LOG_ERR}</string>
+</dict>
+</plist>`;
+  fs.writeFileSync(PLIST_PATH, xml, 'utf8');
+}
+
+let setupWin = null;
+
+function showSetupWindow() {
+  setupWin = new BrowserWindow({
+    width: 340, height: 120,
+    resizable: false, minimizable: false, maximizable: false,
+    titleBarStyle: 'hiddenInset',
+    alwaysOnTop: true,
+    webPreferences: { nodeIntegration: false, contextIsolation: true },
+  });
+  setupWin.loadURL(`data:text/html,<html><body style="font-family:-apple-system;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;background:%231e1e1e;color:%23e8e8e8"><div style="text-align:center"><p style="font-size:15px;margin:0;font-weight:300">Setting up PowerMonitor</p><p style="font-size:12px;color:%23888;margin:8px 0 0">This only happens once</p></div></body></html>`);
+}
+
+function closeSetupWindow() {
+  if (setupWin && !setupWin.isDestroyed()) { setupWin.close(); setupWin = null; }
+}
+
+async function setupLogger() {
+  if (isLoggerCurrent()) return;
+
+  showSetupWindow();
+
+  try {
+    // Ensure directories exist
+    fs.mkdirSync(join(homedir(), '.local', 'bin'),  { recursive: true });
+    fs.mkdirSync(join(homedir(), '.local', 'logs'), { recursive: true });
+
+    // Copy logger.js from bundle to user home
+    const loggerSrc = fs.readFileSync(join(__dirname, 'logger.js'), 'utf8');
+    fs.writeFileSync(LOGGER_DEST, loggerSrc, 'utf8');
+    fs.chmodSync(LOGGER_DEST, 0o755);
+
+    // Unload existing plist if present (upgrade path)
+    if (fs.existsSync(PLIST_PATH)) {
+      try { execSync(`launchctl unload "${PLIST_PATH}"`, { timeout: 5000 }); } catch {}
+    }
+
+    // Write new plist and load it
+    writePlist();
+    execSync(`launchctl load "${PLIST_PATH}"`, { timeout: 5000 });
+
+    // Run once immediately so DB/table exist before connectDb()
+    const resourcesPath = process.resourcesPath || join(__dirname, '..', 'Resources');
+    execSync(`"${process.execPath}" "${LOGGER_DEST}"`, {
+      timeout: 15000,
+      env: {
+        ...process.env,
+        ELECTRON_RUN_AS_NODE: '1',
+        ELECTRON_RESOURCE_PATH: resourcesPath,
+      },
+    });
+
+    console.log('powermonitor: logger setup complete');
+  } catch (e) {
+    console.error('powermonitor: logger setup failed:', e.message);
+  } finally {
+    closeSetupWindow();
+  }
+}
+
 /* ── App lifecycle ───────────────────────────────────────────────────────── */
 app.setName("PowerMonitor");
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   loadSettings();
   nativeTheme.themeSource = settings.theme;
+
+  await setupLogger();
 
   if (!connectDb()) {
     console.error("Could not connect to database");
