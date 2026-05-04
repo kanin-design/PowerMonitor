@@ -1,5 +1,9 @@
 'use strict';
 
+/* ── HTML escaping ───────────────────────────────────────────────────────────*/
+const ESC = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
+function h(s) { return String(s).replace(/[&<>"']/g, c => ESC[c]); }
+
 /* ── State ─────────────────────────────────────────────────────────────────── */
 const state = {
   allEntries: [],
@@ -170,7 +174,7 @@ function lttb(pts, maxPts = 200) {
 /* ── Chart: Battery ──────────────────────────────────────────────────────────*/
 function drawBattery(entries) {
   const V = lttb(applyWindow(entries), 200);
-  if (V.length < 2) return;
+  if (V.length < 2) { document.getElementById('batt-empty').classList.remove('hidden'); return; }
   const { ctx, w, h } = initCanvas('batt-canvas');
   const { top: pT, right: pR, bottom: pB, left: pL } = PAD;
   ctx.clearRect(0, 0, w, h);
@@ -242,7 +246,7 @@ function drawBattery(entries) {
 /* ── Chart: Power Draw ───────────────────────────────────────────────────────*/
 function drawWatts(entries) {
   const V = lttb(applyWindow(entries), 200);
-  if (V.length < 2) return;
+  if (V.length < 2) { document.getElementById('watts-empty').classList.remove('hidden'); return; }
 
   const withW = V.filter(e => e.amperage != null && e.voltage != null);
   if (!withW.length) { document.getElementById('watts-empty').classList.remove('hidden'); return; }
@@ -333,7 +337,7 @@ let hoveredProcess = null;
 
 function drawCpu(entries) {
   const windowed = applyWindow(entries);
-  if (windowed.length < 2) return;
+  if (windowed.length < 2) { document.getElementById('cpu-empty').classList.remove('hidden'); return; }
 
   // Rank processes by total CPU across ALL windowed entries (not lttb-reduced),
   // so a process that spiked briefly is still captured and shown.
@@ -345,13 +349,20 @@ function drawCpu(entries) {
   }));
   const procs = Object.keys(tot).sort((a,b) => tot[b]-tot[a]).slice(0, 10);
 
+  // Clear stale hover if that process isn't in the current window
+  if (hoveredProcess && !procs.includes(hoveredProcess)) hoveredProcess = null;
+
   // Downsample for smooth rendering
   const V = lttb(windowed, 200);
   if (V.length < 2) return;
   const { ctx, w, h } = initCanvas('cpu-canvas');
   const { top: pT, right: pR, bottom: pB, left: pL } = PAD;
   ctx.clearRect(0, 0, w, h);
-  if (!procs.length) return;
+  if (!procs.length) {
+    document.getElementById('cpu-empty').classList.remove('hidden');
+    return;
+  }
+  document.getElementById('cpu-empty').classList.add('hidden');
 
   const yMax = Math.min(100, Math.ceil(mx / 10) * 10) || 10;
   const ch = h - pT - pB, cw = w - pL - pR;
@@ -419,8 +430,8 @@ function drawCpu(entries) {
   // Legend with hover interaction
   const legendEl = document.getElementById('cpu-legend');
   legendEl.innerHTML = procs.map(p =>
-    `<div class="legend-item" data-proc="${p}">
-      <div class="legend-swatch" style="background:${procColor(p)}"></div>${p}
+    `<div class="legend-item" data-proc="${h(p)}">
+      <div class="legend-swatch" style="background:${h(procColor(p))}"></div>${h(p)}
     </div>`
   ).join('');
 
@@ -437,7 +448,6 @@ function drawCpu(entries) {
   };
 
   document.getElementById('cpu-range').textContent = '';
-  document.getElementById('cpu-empty').classList.add('hidden');
 }
 
 function hexRgb(hex) {
@@ -515,7 +525,6 @@ function formatMem(kb) {
 
 function renderProcessList(cpus, mem = {}) {
   const sorted = Object.entries(cpus).sort((a,b) => b[1]-a[1]).slice(0, 8);
-  const maxCpu = sorted.length ? sorted[0][1] : 1;
 
   if (!sorted.length) {
     document.getElementById('proc-list').innerHTML =
@@ -525,15 +534,15 @@ function renderProcessList(cpus, mem = {}) {
 
   document.getElementById('proc-list').innerHTML = sorted.map(([name, cpu]) => {
     const c = procColor(name);
-    const barW = maxCpu > 0 ? round((cpu / maxCpu) * 100) : 0;
     const rss = mem[name];
+
     const memStr = rss ? formatMem(rss) : '';
     return `<div class="process-item">
-      <span class="process-dot" style="background:${c}"></span>
-      <span class="process-name">${name}</span>
+      <span class="process-dot" style="background:${h(c)}"></span>
+      <span class="process-name">${h(name)}</span>
       <span class="process-stat">
-        <span class="process-cpu">${cpu.toFixed(1)}%</span>
-        <span class="process-mem">${memStr}</span>
+        <span class="process-cpu">${h(cpu.toFixed(1))}%</span>
+        <span class="process-mem">${h(memStr)}</span>
       </span>
     </div>`;
   }).join('');
@@ -549,7 +558,7 @@ function renderAssertions(assertions) {
   wrapper.style.display = 'block';
   list.innerHTML = filtered.map(a => {
     const m = a.match(/^(.*?)\s*→\s*(.*)/);
-    return `<span class="assertion-pill">${m ? m[1].trim() + ' → ' + m[2].trim() : a}</span>`;
+    return `<span class="assertion-pill">${m ? h(m[1].trim()) + ' → ' + h(m[2].trim()) : h(a)}</span>`;
   }).join('');
 }
 
@@ -611,27 +620,27 @@ function showTooltip(mx, my, entry) {
 
   let html = `<div class="tooltip-row">
     <span class="tooltip-label">Battery</span>
-    <span class="tooltip-value">${entry.battery}%${entry.charging ? ' ⚡' : ''}</span>
+    <span class="tooltip-value">${h(entry.battery)}%${entry.charging ? ' ⚡' : ''}</span>
   </div>`;
 
   if (watts !== null) {
     const cls = watts >= 0 ? 'tt-charging' : 'tt-discharging';
     html += `<div class="tooltip-row">
       <span class="tooltip-label">Power</span>
-      <span class="tooltip-value ${cls}">${watts >= 0 ? '+' : ''}${watts.toFixed(2)}W</span>
+      <span class="tooltip-value ${cls}">${watts >= 0 ? '+' : ''}${h(watts.toFixed(2))}W</span>
     </div>`;
   }
   if (entry.amperage != null) {
     const cls = entry.amperage > 0 ? 'tt-charging' : 'tt-discharging';
     html += `<div class="tooltip-row">
       <span class="tooltip-label">Amperage</span>
-      <span class="tooltip-value ${cls}">${entry.amperage > 0 ? '+' : ''}${entry.amperage}mA</span>
+      <span class="tooltip-value ${cls}">${entry.amperage > 0 ? '+' : ''}${h(entry.amperage)}mA</span>
     </div>`;
   }
   if (entry.voltage != null) {
     html += `<div class="tooltip-row">
       <span class="tooltip-label">Voltage</span>
-      <span class="tooltip-value">${(entry.voltage/1000).toFixed(2)}V</span>
+      <span class="tooltip-value">${h((entry.voltage/1000).toFixed(2))}V</span>
     </div>`;
   }
   if (entry.cpus && Object.keys(entry.cpus).length) {
@@ -641,9 +650,9 @@ function showTooltip(mx, my, entry) {
       top.forEach(([name, cpu]) =>
         html += `<div class="tooltip-row">
           <span class="tooltip-label">
-            <span class="tooltip-dot" style="background:${procColor(name)}"></span>${name}
+            <span class="tooltip-dot" style="background:${h(procColor(name))}"></span>${h(name)}
           </span>
-          <span class="tooltip-value">${cpu.toFixed(1)}%</span>
+          <span class="tooltip-value">${h(cpu.toFixed(1))}%</span>
         </div>`
       );
     }
@@ -683,8 +692,8 @@ function buildSiPanel(si, memFree) {
 
   const row = (label, value, cls = '') =>
     `<div class="si-row">
-       <span class="si-label">${label}</span>
-       <span class="si-value${cls ? ' ' + cls : ''}">${value}</span>
+       <span class="si-label">${h(label)}</span>
+       <span class="si-value${cls ? ' ' + h(cls) : ''}">${h(value)}</span>
      </div>`;
 
   const div = (cls) => `<div class="${cls}"></div>`;
@@ -702,20 +711,27 @@ function buildSiPanel(si, memFree) {
   const healthCls = pct === null ? '' : pct >= 85 ? 'si-green' : pct >= 70 ? 'si-orange' : 'si-red';
 
   // RAM line: total always shown, free appended when available
+  // Note: ramVal is inserted via a dedicated path below (not through row()) to allow the inner span
   const ramVal = memFree
-    ? `${si.memory} <span class="si-dim">· ${memFree} free</span>`
-    : si.memory || '?';
+    ? `${h(si.memory)} <span class="si-dim">· ${h(memFree)} free</span>`
+    : h(si.memory || '?');
+
+  // RAM row is built separately so we can embed a safe inner <span> for the "free" label
+  const ramRow = `<div class="si-row">
+    <span class="si-label">RAM</span>
+    <span class="si-value">${ramVal}</span>
+  </div>`;
 
   let html = `
     <div class="si-head">
-      <div class="si-model-name">${si.model || 'Mac'}</div>
-      <div class="si-chip-name">Apple ${si.chip || ''}</div>
+      <div class="si-model-name">${h(si.model || 'Mac')}</div>
+      <div class="si-chip-name">Apple ${h(si.chip || '')}</div>
     </div>
     ${div('si-sep')}
     <div class="si-section">
       ${row('CPU', cpuVal)}
       ${si.gpuCores ? row('GPU', si.gpuCores + ' cores') : ''}
-      ${row('RAM', ramVal)}
+      ${ramRow}
     </div>`;
 
   if (si.battHealth && (si.battHealth.maxCapacity || si.battHealth.cycleCount)) {

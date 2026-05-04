@@ -205,6 +205,7 @@ function createWindow() {
       preload: join(__dirname, "preload.js"),
       contextIsolation: true,
       nodeIntegration: false,
+      sandbox: true,
     },
   };
   if (typeof b.x === 'number' && typeof b.y === 'number') { opts.x = b.x; opts.y = b.y; }
@@ -441,7 +442,8 @@ app.whenReady().then(async () => {
   });
 
   ipcMain.on('set-time-range', (_, min) => {
-    settings.timeRange = min;
+    const safe = typeof min === 'number' && Number.isFinite(min) && min >= 0 ? Math.round(min) : 0;
+    settings.timeRange = safe;
     saveSettings();
   });
 
