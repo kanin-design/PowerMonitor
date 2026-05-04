@@ -3,12 +3,10 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self'; script-src 'self'; img-src 'none'; connect-src 'none';" />
   <title>Power Monitor</title>
   <link rel="stylesheet" href="app.css" />
-  <script>
-    document.documentElement.setAttribute('data-theme',
-      window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark');
-  </script>
+  <script src="theme-init.js"></script>
 </head>
 <body>
   <div class="app">
