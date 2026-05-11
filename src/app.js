@@ -10,27 +10,130 @@ const state = {
   windowMs: 0,
   sysInfo: null,
   expandedChart: null,
+  cpuView: 'blocks',
 };
 
 /* ── Process color palette ─────────────────────────────────────────────────── */
-const PROCESS_COLORS = [
-  '#0A84FF', '#BF5AF2', '#32D74B', '#FF9F0A',
-  '#5AC8FA', '#FFD60A', '#FF375F', '#A2845E',
-  '#30D158', '#64D2FF',
-];
-const NAMED = {
-  coreaudiod: '#FF375F', WindowServer: '#BF5AF2', Claude: '#0A84FF',
-  Spotify: '#32D74B', 'Spotify Helper': '#32D74B', Python: '#FFD60A',
-  python3: '#FFD60A', opencode: '#FF9F0A', MTLCompilerService: '#5AC8FA',
-  'Zen Browser': '#30D158', zen: '#30D158', node: '#64D2FF',
-  Safari: '#5AC8FA', kernel_task: '#A2845E',
+// Ten curated colors per theme. Dark: vivid/luminous. Light: same hues, darker+saturated.
+const PALETTES = {
+  dark: [
+    '#0A84FF', // Blue
+    '#32D74B', // Green
+    '#FF9F0A', // Amber
+    '#BF5AF2', // Purple
+    '#FF453A', // Red
+    '#40C8E0', // Cyan
+    '#FFD60A', // Yellow
+    '#FF6BD6', // Magenta
+    '#4CD990', // Mint
+    '#FF5E7A', // Rose
+  ],
+  light: [
+    '#0055CC', // Blue
+    '#1A7A1A', // Green
+    '#C85500', // Burnt Orange
+    '#8833CC', // Purple
+    '#CC1A00', // Red
+    '#006B8C', // Cyan
+    '#997700', // Amber
+    '#CC22AA', // Magenta
+    '#0D8C4A', // Mint
+    '#CC2244', // Rose
+  ],
 };
-const cc = {};
-let ci = 0;
+
+const procIdx = {};  // name → palette index (0-9) or ≥10 for hash-based
+let nextIdx = 0;
+
 function procColor(name) {
-  if (NAMED[name]) return NAMED[name];
-  if (!cc[name]) cc[name] = PROCESS_COLORS[ci++ % PROCESS_COLORS.length];
-  return cc[name];
+  if (procIdx[name] === undefined) procIdx[name] = nextIdx++;
+  const idx   = procIdx[name];
+  const theme = document.documentElement.getAttribute('data-theme') === 'light' ? 'light' : 'dark';
+  const pal   = PALETTES[theme];
+  if (idx < pal.length) return pal[idx];
+  // Overflow: deterministic hash → pleasant hue for current theme
+  let hash = 5381;
+  for (let i = 0; i < name.length; i++) hash = ((hash << 5) + hash + name.charCodeAt(i)) & 0xFFFFFF;
+  const hue = hash % 360;
+  return theme === 'dark' ? `hsl(${hue},72%,62%)` : `hsl(${hue},60%,36%)`;
+}
+
+/* ── System process classification ──────────────────────────────────────────*/
+const SYSTEM_USERS = new Set([
+  'root', '_windowserver', '_spotlight', '_mdnsresponder', '_networkd',
+  'daemon', '_coreaudiod', '_usbmuxd', '_locationd', '_hidd', '_appinstalld',
+  '_assetcache', '_softwareupdate', '_sntpd', '_logd', '_trustd', '_nsurlsessiond',
+]);
+
+const SYSTEM_PROC_INFO = {
+  kernel_task:       'macOS kernel',
+  WindowServer:      'Display compositor',
+  coreaudiod:        'Audio engine',
+  launchd:           'System init',
+  mds:               'Spotlight indexer',
+  mds_stores:        'Spotlight storage',
+  mdworker_shared:   'Spotlight worker',
+  trustd:            'Certificate trust',
+  logd:              'System logging',
+  configd:           'Network config',
+  distnoted:         'Distributed notifications',
+  powerd:            'Power management',
+  bluetoothd:        'Bluetooth daemon',
+  nsurlsessiond:     'URL session daemon',
+  hidd:              'HID event daemon',
+  locationd:         'Location services',
+  symptomsd:         'Network diagnostics',
+  sysmond:           'System monitor',
+  UserEventAgent:    'User event agent',
+  cfprefsd:          'Preferences daemon',
+};
+
+// rank 0 = biggest sys proc, rank (total-1) = smallest
+// Dark mode: biggest → mid-grey, smallest → near-white
+// Light mode: biggest → mid-grey, smallest → near-black
+function sysGrey(rank, total, isDark) {
+  const t = total <= 1 ? 0 : rank / (total - 1);
+  const l = isDark ? Math.round(42 + t * 52) : Math.round(62 - t * 48);
+  return `hsl(220,8%,${l}%)`;  // very slight blue tint keeps it "cool" grey
+}
+
+function isSystemProcess(name, user) {
+  if (user && SYSTEM_USERS.has(user)) return true;
+  // Fallback for older entries without user data: check known system process names
+  if (!user && SYSTEM_PROC_INFO[name]) return true;
+  return false;
+}
+
+function desaturate(hex, amount) {
+  const r = parseInt(hex.slice(1,3),16)/255;
+  const g = parseInt(hex.slice(3,5),16)/255;
+  const b = parseInt(hex.slice(5,7),16)/255;
+  const max = Math.max(r,g,b), min = Math.min(r,g,b);
+  let h2 = 0, s = 0;
+  const l = (max+min)/2;
+  if (max !== min) {
+    const d = max - min;
+    s = l > 0.5 ? d/(2-max-min) : d/(max+min);
+    switch(max) {
+      case r: h2 = ((g-b)/d + (g<b?6:0))/6; break;
+      case g: h2 = ((b-r)/d + 2)/6; break;
+      case b: h2 = ((r-g)/d + 4)/6; break;
+    }
+  }
+  const ns = Math.max(0, s * (1-amount));
+  // HSL back to RGB
+  function hue2rgb(p,q,t){if(t<0)t+=1;if(t>1)t-=1;if(t<1/6)return p+(q-p)*6*t;if(t<1/2)return q;if(t<2/3)return p+(q-p)*(2/3-t)*6;return p;}
+  let rr,gg,bb;
+  if (ns===0) { rr=gg=bb=l; }
+  else {
+    const q2 = l<0.5 ? l*(1+ns) : l+ns-l*ns;
+    const p2 = 2*l-q2;
+    rr = hue2rgb(p2,q2,h2+1/3);
+    gg = hue2rgb(p2,q2,h2);
+    bb = hue2rgb(p2,q2,h2-1/3);
+  }
+  const toHex = x => Math.round(x*255).toString(16).padStart(2,'0');
+  return `#${toHex(rr)}${toHex(gg)}${toHex(bb)}`;
 }
 
 /* ── Assertion filter ────────────────────────────────────────────────────────*/
@@ -52,13 +155,17 @@ if (window.api && window.api.onThemeChanged) {
 }
 
 if (window.api && window.api.onSettings) {
-  window.api.onSettings(({ isDark, timeRange }) => {
+  window.api.onSettings(({ isDark, timeRange, cpuView }) => {
     applyTheme(isDark);
     const btn = document.querySelector(`.range-btn[data-min="${timeRange}"]`);
     if (btn) {
       document.querySelectorAll('.range-btn').forEach(b => b.classList.remove('active'));
       btn.classList.add('active');
       state.windowMs = timeRange * 60000;
+    }
+    if (cpuView === 'smooth' || cpuView === 'blocks') {
+      state.cpuView = cpuView;
+      if (state.allEntries.length) drawCpu(state.allEntries);
     }
   });
 }
@@ -333,9 +440,16 @@ function drawWatts(entries) {
 }
 
 /* ── Chart: CPU ──────────────────────────────────────────────────────────────*/
-let hoveredProcess = null;
+let hoveredProcess  = null;
+let cpuBlocksLayout = [];  // [{x, bw, segments:[{proc,y,h,value,isSystem}]}]
+let lastLegendKey   = '';
 
 function drawCpu(entries) {
+  if (state.cpuView === 'blocks') { drawCpuBlocks(entries); return; }
+  drawCpuSmooth(entries);
+}
+
+function drawCpuSmooth(entries) {
   const windowed = applyWindow(entries);
   if (windowed.length < 2) { document.getElementById('cpu-empty').classList.remove('hidden'); return; }
 
@@ -364,7 +478,7 @@ function drawCpu(entries) {
   }
   document.getElementById('cpu-empty').classList.add('hidden');
 
-  const yMax = Math.min(100, Math.ceil(mx / 10) * 10) || 10;
+  const yMax = Math.ceil(mx / 10) * 10 || 10;
   const ch = h - pT - pB, cw = w - pL - pR;
   drawGrid(ctx, w, h, PAD, 4);
 
@@ -430,9 +544,7 @@ function drawCpu(entries) {
   // Legend with hover interaction
   const legendEl = document.getElementById('cpu-legend');
   legendEl.innerHTML = procs.map(p =>
-    `<div class="legend-item" data-proc="${h(p)}">
-      <div class="legend-swatch" style="background:${h(procColor(p))}"></div>${h(p)}
-    </div>`
+    `<div class="legend-item" data-proc="${h(p)}" style="color:${h(procColor(p))}">${h(p)}</div>`
   ).join('');
 
   legendEl.onmouseenter = e => {
@@ -450,8 +562,220 @@ function drawCpu(entries) {
   document.getElementById('cpu-range').textContent = '';
 }
 
-function hexRgb(hex) {
-  return [parseInt(hex.slice(1,3),16), parseInt(hex.slice(3,5),16), parseInt(hex.slice(5,7),16)].join(',');
+const rgbCache = {};
+function hexRgb(color) {
+  if (rgbCache[color]) return rgbCache[color];
+  let result;
+  if (color.startsWith('#')) {
+    result = [parseInt(color.slice(1,3),16), parseInt(color.slice(3,5),16), parseInt(color.slice(5,7),16)].join(',');
+  } else {
+    const tmp = document.createElement('canvas'); tmp.width = tmp.height = 1;
+    const c   = tmp.getContext('2d'); c.fillStyle = color; c.fillRect(0,0,1,1);
+    const d   = c.getImageData(0,0,1,1).data;
+    result = `${d[0]},${d[1]},${d[2]}`;
+  }
+  return (rgbCache[color] = result);
+}
+
+/* ── CPU blocks helpers ──────────────────────────────────────────────────────*/
+function buildBuckets(windowed, procs, N) {
+  const t0   = +new Date(windowed[0].ts);
+  const t1   = +new Date(windowed[windowed.length-1].ts);
+  const span = (t1 - t0) || 1;
+  const sums   = Array.from({length: N}, () => ({}));
+  const counts = new Array(N).fill(0);
+
+  for (const e of windowed) {
+    const b = Math.min(N-1, Math.floor(((+new Date(e.ts) - t0) / span) * N));
+    counts[b]++;
+    for (const proc of procs) sums[b][proc] = (sums[b][proc] || 0) + (e.cpus[proc] || 0);
+  }
+
+  const buckets = [];
+  let lastFilled = null;
+  for (let b = 0; b < N; b++) {
+    if (counts[b] > 0) {
+      const avg = {};
+      for (const proc of procs) avg[proc] = (sums[b][proc] || 0) / counts[b];
+      lastFilled = avg;
+      buckets.push({ ...avg });
+    } else {
+      buckets.push(lastFilled ? { ...lastFilled } : Object.fromEntries(procs.map(p => [p, 0])));
+    }
+  }
+  return buckets;
+}
+
+function drawCpuBlocks(entries) {
+  const windowed = applyWindow(entries);
+  if (windowed.length < 2) { document.getElementById('cpu-empty').classList.remove('hidden'); return; }
+
+  const tot = {};
+  windowed.forEach(e => Object.entries(e.cpus).forEach(([k, v]) => { tot[k] = (tot[k] || 0) + v; }));
+  const allProcs = Object.keys(tot).sort((a, b) => tot[b] - tot[a]).slice(0, 10);
+  if (!allProcs.length) { document.getElementById('cpu-empty').classList.remove('hidden'); return; }
+  document.getElementById('cpu-empty').classList.add('hidden');
+
+  if (hoveredProcess && !allProcs.includes(hoveredProcess)) hoveredProcess = null;
+
+  // Classify — preserve size-sort order within each group
+  const lastWithUsers = [...windowed].reverse().find(e => e.procUsers && Object.keys(e.procUsers).length);
+  const procUsers = lastWithUsers ? lastWithUsers.procUsers : {};
+  const sysProcs  = allProcs.filter(p =>  isSystemProcess(p, procUsers[p]));
+  const userProcs = allProcs.filter(p => !isSystemProcess(p, procUsers[p]));
+  // Draw order: system first from bottom, then user on top — both groups largest-at-bottom
+  const drawOrder = [...sysProcs, ...userProcs];
+
+  const { ctx, w, h } = initCanvas('cpu-canvas');
+  const { top: pT, right: pR, bottom: pB, left: pL } = PAD;
+  ctx.clearRect(0, 0, w, h);
+
+  const ch = h - pT - pB, cw = w - pL - pR;
+  const N       = Math.max(40, Math.min(120, Math.floor(cw / 8)));
+  const buckets = buildBuckets(windowed, allProcs, N);
+
+  let peakStack = 0;
+  for (const bkt of buckets) {
+    const total = allProcs.reduce((s, p) => s + (bkt[p] || 0), 0);
+    if (total > peakStack) peakStack = total;
+  }
+  const yMax    = Math.ceil(Math.max(peakStack, 10) / 10) * 10;
+  const bucketW = cw / N;
+
+  drawGrid(ctx, w, h, PAD, 4);
+
+  axisStyle(ctx); ctx.textAlign = 'right';
+  for (let i = 0; i <= 4; i++)
+    ctx.fillText(Math.round(yMax * (1 - i/4)) + '%', pL - 8, pT + ch*(i/4) + 3.5);
+
+  const t0 = +new Date(windowed[0].ts);
+  const t1 = +new Date(windowed[windowed.length-1].ts);
+  axisStyle(ctx); ctx.textAlign = 'center';
+  for (let i = 0; i <= 5; i++) {
+    const x  = pL + cw * (i/5);
+    const ts = new Date(t0 + (t1 - t0) * (i/5));
+    ctx.fillText(ts.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}), x, h - 6);
+  }
+
+  cpuBlocksLayout = [];
+  const isDark = document.documentElement.getAttribute('data-theme') !== 'light';
+
+  for (let b = 0; b < N; b++) {
+    const x        = pL + b * bucketW;
+    const bw       = Math.max(1, bucketW - 1);
+    const bkt      = buckets[b];
+    const segments = [];
+    let yBase      = pT + ch;
+
+    for (const proc of drawOrder) {
+      const val  = bkt[proc] || 0;
+      const segH = Math.min((val / yMax) * ch, yBase - pT);
+      if (segH <= 0) continue;
+
+      const sysRank = sysProcs.indexOf(proc);
+      const isSys   = sysRank !== -1;
+      const color   = isSys ? sysGrey(sysRank, sysProcs.length, isDark) : procColor(proc);
+      const alpha   = hoveredProcess === null ? 0.75 : hoveredProcess === proc ? 1.0 : 0.2;
+      ctx.globalAlpha = alpha;
+      ctx.fillStyle   = color;
+      ctx.fillRect(x, yBase - segH, bw, segH);
+
+      segments.push({ proc, y: yBase - segH, h: segH, value: val, isSystem: isSys, color });
+      yBase -= segH;
+    }
+
+    cpuBlocksLayout.push({ x, bw, segments });
+  }
+  ctx.globalAlpha = 1;
+
+  // Legend: user procs first (colored), then system procs (grey, muted)
+  // Only rebuild DOM when the process list or theme actually changes — prevents
+  // layout thrash on every RAF frame which would interfere with the expand transition.
+  const legendEl = document.getElementById('cpu-legend');
+  const legendKey = userProcs.join(',') + '|' + sysProcs.join(',') + '|' + (isDark ? 'd' : 'l');
+  if (legendKey !== lastLegendKey) {
+    lastLegendKey = legendKey;
+    legendEl.innerHTML = [
+      ...userProcs.map(p =>
+        `<div class="legend-item" data-proc="${h(p)}" style="color:${h(procColor(p))}">${h(p)}</div>`),
+      ...sysProcs.map((p, i) =>
+        `<div class="legend-item legend-item-sys" data-proc="${h(p)}" style="color:${h(sysGrey(i, sysProcs.length, isDark))}">${h(p)}</div>`),
+    ].join('');
+
+    legendEl.onmouseover = e => {
+      const item = e.target.closest('.legend-item');
+      if (item && item.dataset.proc !== hoveredProcess) {
+        hoveredProcess = item.dataset.proc;
+        drawCpuBlocks(state.allEntries);
+      }
+    };
+    legendEl.onmouseleave = () => {
+      hoveredProcess = null;
+      drawCpuBlocks(state.allEntries);
+    };
+  }
+
+  document.getElementById('cpu-range').textContent = '';
+}
+
+function handleCpuBlocksHover(e) {
+  const canvas = document.getElementById('cpu-canvas');
+  const rect   = canvas.getBoundingClientRect();
+  const mx     = e.clientX - rect.left;
+  const my     = e.clientY - rect.top;
+
+  let found = null;
+  outer: for (const bucket of cpuBlocksLayout) {
+    if (mx < bucket.x || mx > bucket.x + bucket.bw) continue;
+    for (const seg of bucket.segments) {
+      if (my >= seg.y && my <= seg.y + seg.h) { found = seg.proc; break outer; }
+    }
+  }
+
+  if (found !== hoveredProcess) {
+    hoveredProcess = found;
+    drawCpuBlocks(state.allEntries);
+  }
+
+  if (found) {
+    showCpuBlockTooltip(e.clientX, e.clientY, found, mx);
+  } else {
+    hideTooltip();
+  }
+}
+
+function showCpuBlockTooltip(clientX, clientY, proc, canvasX) {
+  const bucket = cpuBlocksLayout.find(b => canvasX >= b.x && canvasX <= b.x + b.bw);
+  const seg    = bucket ? bucket.segments.find(s => s.proc === proc) : null;
+  const val      = seg ? seg.value : 0;
+  const isSystem = seg ? seg.isSystem : false;
+  const color    = seg ? seg.color : procColor(proc);
+
+  // Determine user owner from last entries
+  const lastWithUsers = [...state.allEntries].reverse().find(e => e.procUsers && e.procUsers[proc]);
+  const owner  = lastWithUsers ? lastWithUsers.procUsers[proc] : null;
+  const desc   = SYSTEM_PROC_INFO[proc];
+
+  const badge  = isSystem
+    ? `<span style="color:var(--text-tertiary);font-size:10px">System${desc ? ' · ' + h(desc) : ''}</span>`
+    : `<span style="color:var(--text-tertiary);font-size:10px">User process</span>`;
+
+  const tt = document.getElementById('tooltip');
+  document.getElementById('tt-time').textContent = proc;
+  document.getElementById('tt-body').innerHTML =
+    `<div class="tooltip-row">
+       <span class="tooltip-label">
+         <span class="tooltip-dot" style="background:${h(color)}"></span>${h(proc)}
+       </span>
+       <span class="tooltip-value">${val.toFixed(1)}%</span>
+     </div>
+     <div style="margin-top:4px">${badge}</div>
+     ${owner ? `<div style="color:var(--text-tertiary);font-size:10px;margin-top:2px">Owner: ${h(owner)}</div>` : ''}`;
+
+  const W = tt.offsetWidth || 200, H = tt.offsetHeight || 100;
+  tt.style.left    = (clientX + 16 + W > window.innerWidth  ? clientX - W - 16 : clientX + 16) + 'px';
+  tt.style.top     = (clientY - 10 + H > window.innerHeight ? window.innerHeight - H - 10 : clientY - 10) + 'px';
+  tt.style.display = 'block';
 }
 
 /* ── Window filter ───────────────────────────────────────────────────────────*/
@@ -668,7 +992,7 @@ function showTooltip(mx, my, entry) {
 function hideTooltip() { document.getElementById('tooltip').style.display = 'none'; }
 
 function setupHover() {
-  ['batt-canvas', 'watts-canvas', 'cpu-canvas'].forEach(id => {
+  ['batt-canvas', 'watts-canvas'].forEach(id => {
     const canvas = document.getElementById(id);
     canvas.addEventListener('mousemove', e => {
       const V = applyWindow(state.allEntries);
@@ -677,6 +1001,25 @@ function setupHover() {
       showTooltip(e.clientX, e.clientY, nearestEntry(e.clientX - rect.left, rect.width, V));
     });
     canvas.addEventListener('mouseleave', hideTooltip);
+  });
+
+  const cpuCanvas = document.getElementById('cpu-canvas');
+  cpuCanvas.addEventListener('mousemove', e => {
+    if (state.cpuView === 'blocks') {
+      handleCpuBlocksHover(e);
+    } else {
+      const V = applyWindow(state.allEntries);
+      if (V.length < 2) return;
+      const rect = cpuCanvas.getBoundingClientRect();
+      showTooltip(e.clientX, e.clientY, nearestEntry(e.clientX - rect.left, rect.width, V));
+    }
+  });
+  cpuCanvas.addEventListener('mouseleave', () => {
+    if (state.cpuView === 'blocks' && hoveredProcess !== null) {
+      hoveredProcess = null;
+      drawCpuBlocks(state.allEntries);
+    }
+    hideTooltip();
   });
 }
 
@@ -897,6 +1240,7 @@ function positionSiPanel(trigger, panel) {
 
     card.addEventListener('mousedown', e => { mdX = e.clientX; mdY = e.clientY; });
     card.addEventListener('click', e => {
+      if (e.target.closest('.legend-item')) return;
       if (Math.abs(e.clientX - mdX) > 5 || Math.abs(e.clientY - mdY) > 5) return;
       const chartId = card.dataset.chartId;
       if (!chartId) return;

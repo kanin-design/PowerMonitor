@@ -18,7 +18,7 @@ let mainWindow;
 let db;
 
 /* ── Settings ────────────────────────────────────────────────────────────── */
-const SETTINGS_DEFAULTS = { theme: 'system', timeRange: 0, windowBounds: { width: 920, height: 680 } };
+const SETTINGS_DEFAULTS = { theme: 'system', timeRange: 0, cpuView: 'blocks', windowBounds: { width: 920, height: 680 } };
 let settings = { ...SETTINGS_DEFAULTS };
 
 function settingsPath() { return join(app.getPath('userData'), 'settings.json'); }
@@ -110,9 +110,13 @@ function queryEntries(limit = 3000) {
     return rows.map(row => {
       let pd = {};
       try { pd = JSON.parse(row.processdetails || "{}"); } catch {}
-      const cpus = {}, mem = {};
+      const cpus = {}, mem = {}, procUsers = {};
       (pd.processes || []).forEach(p => {
-        if (p.name) { cpus[p.name] = p.cpu || 0; mem[p.name] = p.mem || p.rss || 0; }
+        if (p.name) {
+          cpus[p.name] = p.cpu || 0;
+          mem[p.name]  = p.mem || p.rss || 0;
+          if (p.user) procUsers[p.name] = p.user;
+        }
       });
 
       // Amperage stored as unsigned 64-bit — convert to signed
@@ -128,13 +132,14 @@ function queryEntries(limit = 3000) {
         : null;
 
       return {
-        ts:       row.ts,
-        battery:  row.battery,
-        charging: !!row.charging,
+        ts:        row.ts,
+        battery:   row.battery,
+        charging:  !!row.charging,
         amperage,
-        voltage:  row.voltage,
+        voltage:   row.voltage,
         cpus,
         mem,
+        procUsers,
         timeLeft,
         assertions: pd.assertions || [],
       };
@@ -152,7 +157,22 @@ function buildMenu() {
     saveSettings();
     nativeTheme.themeSource = mode;
   };
+  const setCpuView = (mode) => {
+    settings.cpuView = mode;
+    saveSettings();
+    buildMenu();
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      try {
+        mainWindow.webContents.send('settings', {
+          isDark:    nativeTheme.shouldUseDarkColors,
+          timeRange: settings.timeRange,
+          cpuView:   mode,
+        });
+      } catch {}
+    }
+  };
   const t = settings.theme;
+  const cv = settings.cpuView || 'blocks';
   const template = [
     {
       label: 'PowerMonitor',
@@ -177,6 +197,14 @@ function buildMenu() {
             { label: 'System', type: 'radio', checked: t === 'system', click: () => setTheme('system') },
             { label: 'Light',  type: 'radio', checked: t === 'light',  click: () => setTheme('light')  },
             { label: 'Dark',   type: 'radio', checked: t === 'dark',   click: () => setTheme('dark')   },
+          ],
+        },
+        { type: 'separator' },
+        {
+          label: 'CPU Chart Style',
+          submenu: [
+            { label: 'Stacked Blocks', type: 'radio', checked: cv === 'blocks', click: () => setCpuView('blocks') },
+            { label: 'Smooth',         type: 'radio', checked: cv === 'smooth', click: () => setCpuView('smooth') },
           ],
         },
       ],
@@ -366,9 +394,20 @@ function closeSetupWindow() {
   if (setupWin && !setupWin.isDestroyed()) { setupWin.close(); setupWin = null; }
 }
 
+function runLoggerOnce(loggerPath) {
+  try {
+    execSync(`"${process.execPath}" "${loggerPath}"`, {
+      timeout: 15000,
+      env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
+    });
+  } catch (e) { console.error('powermonitor: logger run failed:', e.message); }
+}
+
 async function setupLogger() {
   if (!app.isPackaged) {
-    console.log('powermonitor: dev mode — skipping logger auto-setup');
+    const devLoggerPath = join(__dirname, 'logger.js');
+    runLoggerOnce(devLoggerPath);
+    setInterval(() => runLoggerOnce(devLoggerPath), 60000);
     return;
   }
   if (isLoggerCurrent()) return;
@@ -453,6 +492,7 @@ app.whenReady().then(async () => {
     mainWindow.webContents.send('settings', {
       isDark:    nativeTheme.shouldUseDarkColors,
       timeRange: settings.timeRange,
+      cpuView:   settings.cpuView || 'blocks',
     });
     queryAndSend();
   });

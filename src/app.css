@@ -536,7 +536,7 @@ html, body {
 .chart-body {
   position: relative;
   flex: 1;
-  min-height: 100px;
+  min-height: 60px;
   overflow: hidden;
 }
 
@@ -567,26 +567,37 @@ html, body {
   gap: 4px 10px;
   margin-top: var(--space-3);
   flex-shrink: 0;
+  max-height: 44px;
+  overflow: hidden;
 }
 
 .legend-item {
   display: flex;
   align-items: center;
-  gap: 5px;
   font-size: 11px;
-  color: var(--text-tertiary);
+  font-weight: 500;
+  opacity: 0.72;
   cursor: pointer;
-  padding: 2px 4px;
+  padding: 2px 5px;
   border-radius: 4px;
-  transition: color 0.12s ease;
+  transition: opacity 0.12s ease, filter 0.12s ease;
+  white-space: nowrap;
 }
 
-.legend-item:hover { color: var(--text-primary); }
+.legend-item:hover {
+  opacity: 1;
+  filter: brightness(1.2);
+}
 
-.legend-swatch {
-  width: 10px;
-  height: 2px;
-  border-radius: 2px;
+.legend-item-sys {
+  opacity: 0.45;
+  font-style: italic;
+  font-weight: 400;
+}
+
+.legend-item-sys:hover {
+  opacity: 0.75;
+  filter: brightness(1.15);
 }
 
 /* ── Sysinfo panel (CPU legend hover) ───────────────────────────────────────*/
