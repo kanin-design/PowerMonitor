@@ -18,7 +18,7 @@ let mainWindow;
 let db;
 
 /* ── Settings ────────────────────────────────────────────────────────────── */
-const SETTINGS_DEFAULTS = { theme: 'system', timeRange: 0, cpuView: 'blocks', windowBounds: { width: 920, height: 680 } };
+const SETTINGS_DEFAULTS = { theme: 'system', timeRange: 43200, cpuView: 'blocks', windowBounds: { width: 920, height: 680 } };
 let settings = { ...SETTINGS_DEFAULTS };
 
 function settingsPath() { return join(app.getPath('userData'), 'settings.json'); }
@@ -96,16 +96,20 @@ function connectDb() {
 }
 
 /* ── Query entries ───────────────────────────────────────────────────────── */
-function queryEntries(limit = 3000) {
+function queryEntries(minutesBack = 43200) {
   if (!db) return [];
   try {
+    // Query by timestamp (indexed) rather than a raw row LIMIT so "30d" actually
+    // returns 30 days of data instead of an arbitrary row count.
+    const cutoff = Math.floor(Date.now() / 1000) - minutesBack * 60;
     const rows = db.prepare(`
       SELECT ts, battery, charging, amperage, voltage,
              time_remaining_mins, processdetails
       FROM power_log
+      WHERE ts_unix >= ?
       ORDER BY ts DESC
-      LIMIT ?
-    `).all(limit);
+      LIMIT 50000
+    `).all(cutoff);
 
     return rows.map(row => {
       let pd = {};
@@ -322,7 +326,7 @@ let sysInfo = null;
 
 function queryAndSend() {
   if (!db) return;
-  const entries = queryEntries(3000);
+  const entries = queryEntries(settings.timeRange || 43200);
   if (!entries.length) return;
   const latest = entries[entries.length - 1];
   if (latest.ts === lastEntryTs) return;
@@ -481,9 +485,11 @@ app.whenReady().then(async () => {
   });
 
   ipcMain.on('set-time-range', (_, min) => {
-    const safe = typeof min === 'number' && Number.isFinite(min) && min >= 0 ? Math.round(min) : 0;
+    const safe = typeof min === 'number' && Number.isFinite(min) && min >= 0 ? Math.round(min) : 43200;
     settings.timeRange = safe;
     saveSettings();
+    lastEntryTs = null;  // force re-fetch with new time window
+    queryAndSend();
   });
 
   ipcMain.handle('get-mem-free', () => getMemFree());
@@ -497,7 +503,9 @@ app.whenReady().then(async () => {
     queryAndSend();
   });
 
-  setInterval(queryAndSend, 5000);
+  let pollInterval = setInterval(queryAndSend, 5000);
+  mainWindow.on('blur',  () => { clearInterval(pollInterval); pollInterval = null; });
+  mainWindow.on('focus', () => { if (!pollInterval) { queryAndSend(); pollInterval = setInterval(queryAndSend, 5000); } });
 });
 
 app.on("window-all-closed", () => {

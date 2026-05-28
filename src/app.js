@@ -192,6 +192,149 @@ function round(n) { return Math.round(n); }
 
 const PAD = { top: 16, right: 20, bottom: 32, left: 48 };
 
+// Returns { major:[{frac,label}], minor:[{frac}] }
+// Short ranges → relative labels counted back from "now" (t1)
+// Long ranges  → absolute LOCAL-TIME calendar anchors (00:00, 06:00 … Jun 12 …)
+function xTicks(t0, t1) {
+  const span = t1 - t0;
+
+  // Relative: step backwards from t1
+  function relTicks(stepMs) {
+    const r = [];
+    for (let t = t1; t >= t0; t -= stepMs) r.unshift((t - t0) / span);
+    return r;
+  }
+
+  // Absolute: snap to LOCAL-time boundaries (hours or days), then step forward.
+  // This avoids the UTC-offset bug where Math.ceil(t/step)*step gives 07:00
+  // instead of 06:00 in non-UTC timezones.
+  function absTicks(stepHours) {
+    const stepMs = stepHours * 3600e3;
+    // Local midnight of the day containing t0
+    const d0 = new Date(t0);
+    const midnight = new Date(d0.getFullYear(), d0.getMonth(), d0.getDate()).getTime();
+    // First boundary at or after t0
+    const stepsFromMidnight = Math.ceil((t0 - midnight) / stepMs);
+    const first = midnight + stepsFromMidnight * stepMs;
+    const r = [];
+    for (let t = first; t <= t1; t += stepMs) r.push((t - t0) / span);
+    return r;
+  }
+
+  // Absolute day ticks: start from midnight of the first data day, step forward.
+  // Starting from midnight (not the next boundary) ensures the first visible label
+  // anchors to the start of the data rather than jumping forward a full week.
+  function dayTicks(stepDays) {
+    const stepMs = stepDays * 86400e3;
+    const d0 = new Date(t0);
+    const midnight = new Date(d0.getFullYear(), d0.getMonth(), d0.getDate()).getTime();
+    const r = [];
+    for (let t = midnight; t <= t1; t += stepMs) {
+      const frac = (t - t0) / span;
+      if (frac >= 0) r.push(frac);   // only include ticks at or after data start
+    }
+    return r;
+  }
+
+  // Choose major step to target ~5 labels across the visible span
+  const daysInSpan = span / 86400e3;
+  const dayMajorStep = daysInSpan <= 5  ? 1
+                     : daysInSpan <= 12 ? 2
+                     : daysInSpan <= 20 ? 4
+                     : daysInSpan <= 35 ? 5
+                     : 7;
+
+  let majorFracs, minorFracs, fmt;
+  if      (span <= 12  * 60e3)  { majorFracs=relTicks(2*60e3);          minorFracs=relTicks(60e3);    fmt='rel-min'; }
+  else if (span <= 75  * 60e3)  { majorFracs=relTicks(15*60e3);         minorFracs=relTicks(5*60e3);  fmt='rel-min'; }
+  else if (span <= 7   * 3600e3){ majorFracs=relTicks(3600e3);          minorFracs=relTicks(30*60e3); fmt='rel-hr';  }
+  else if (span <= 25  * 3600e3){ majorFracs=absTicks(6);               minorFracs=absTicks(1);       fmt='abs-hr';  }
+  else                          { majorFracs=dayTicks(dayMajorStep);    minorFracs=dayTicks(1);       fmt='abs-day'; }
+
+  const majorSet = new Set(majorFracs.map(f => f.toFixed(8)));
+  const minor    = minorFracs.filter(f => !majorSet.has(f.toFixed(8)));
+
+  const major = majorFracs.map(frac => {
+    const t = t0 + frac * span;
+    const d = new Date(t);
+    let label;
+    if (fmt === 'rel-min') {
+      const m = Math.round((t1 - t) / 60e3);
+      label = m === 0 ? 'now' : `${m}m`;
+    } else if (fmt === 'rel-hr') {
+      const hr = Math.round((t1 - t) / 3600e3);
+      label = hr === 0 ? 'now' : `${hr}h`;
+    } else if (fmt === 'abs-hr') {
+      // Local 24-hour clock — always 00:00, 06:00, 12:00, 18:00
+      label = `${String(d.getHours()).padStart(2,'0')}:00`;
+    } else {
+      label = d.toLocaleDateString([], { month: 'short', day: 'numeric' });
+    }
+    return { frac, label };
+  });
+
+  return { major, minor };
+}
+
+// Draw x-axis: dotted vertical lines + labels at major ticks, small marks at minor ticks
+function drawXAxis(ctx, ticks, pL, pT, cw, ch, h) {
+  const { major, minor } = ticks;
+  ctx.save();
+
+  // Minor tick marks at bottom of chart area
+  ctx.strokeStyle = getVar('--text-quaternary');
+  ctx.globalAlpha = 0.5;
+  ctx.lineWidth = 1;
+  ctx.setLineDash([]);
+  for (const frac of minor) {
+    const x = pL + cw * frac;
+    ctx.beginPath(); ctx.moveTo(x, pT + ch); ctx.lineTo(x, pT + ch + 4); ctx.stroke();
+  }
+
+  // Major: dotted vertical line through chart body
+  ctx.setLineDash([2, 3]);
+  ctx.globalAlpha = 0.25;
+  for (const { frac } of major) {
+    const x = pL + cw * frac;
+    ctx.beginPath(); ctx.moveTo(x, pT); ctx.lineTo(x, pT + ch); ctx.stroke();
+  }
+  ctx.setLineDash([]); ctx.globalAlpha = 1;
+
+  // Labels — skip if they'd overlap the previous one
+  axisStyle(ctx); ctx.textAlign = 'center';
+  let lastX = -99;
+  for (const { frac, label } of major) {
+    const x = pL + cw * frac;
+    if (x - lastX < 28) continue;
+    ctx.fillText(label, x, h - 6);
+    lastX = x;
+  }
+  ctx.restore();
+}
+
+// Crosshair: thin vertical line at mouse position (0..1 fraction of chart width)
+function drawCrosshair(ctx, frac, pL, pT, cw, ch) {
+  if (frac === null) return;
+  const x = pL + cw * frac;
+  ctx.save();
+  ctx.strokeStyle = getVar('--text-secondary');
+  ctx.globalAlpha = 0.45;
+  ctx.lineWidth = 1;
+  ctx.setLineDash([3, 3]);
+  ctx.beginPath(); ctx.moveTo(x, pT); ctx.lineTo(x, pT + ch); ctx.stroke();
+  ctx.restore();
+}
+
+// "3h ago", "2d ago", etc.
+function timeAgo(ts) {
+  const m = Math.floor((Date.now() - +new Date(ts)) / 60e3);
+  if (m <  2)  return 'just now';
+  if (m < 60)  return `${m}m ago`;
+  const hr = Math.floor(m / 60);
+  if (hr < 24) return `${hr}h ago`;
+  return `${Math.floor(hr / 24)}d ago`;
+}
+
 function drawGrid(ctx, w, h, pad, rows = 4) {
   const ch = h - pad.top - pad.bottom;
   ctx.strokeStyle = getVar('--text-quaternary');
@@ -295,7 +438,8 @@ function drawBattery(entries) {
     ctx.fillText(round(100 * (1 - i/4)) + '%', pL - 8, pT + ch*(i/4) + 3.5);
   }
 
-  const t0 = +new Date(V[0].ts), span = +new Date(V[V.length-1].ts) - t0 || 1;
+  const t0 = +new Date(V[0].ts), t1 = +new Date(V[V.length-1].ts);
+  const span = t1 - t0 || 1;
   const xOf = e => pL + cw * ((+new Date(e.ts) - t0) / span);
   const yOf = v => pT + ch * (1 - v / 100);
 
@@ -336,13 +480,8 @@ function drawBattery(entries) {
   ctx.fillStyle = '#32D74B'; ctx.fill();
   ctx.strokeStyle = 'rgba(255,255,255,0.6)'; ctx.lineWidth = 1.5; ctx.stroke();
 
-  // X labels
-  axisStyle(ctx); ctx.textAlign = 'center';
-  V.filter((_, i) => i % Math.ceil(V.length/6) === 0 || i === V.length-1)
-    .forEach(e => ctx.fillText(
-      new Date(e.ts).toLocaleTimeString([], { hour:'2-digit', minute:'2-digit' }),
-      xOf(e), h - 6
-    ));
+  drawXAxis(ctx, xTicks(t0, t1), pL, pT, cw, ch, h);
+  drawCrosshair(ctx, hoverX.batt, pL, pT, cw, ch);
 
   document.getElementById('batt-empty').classList.add('hidden');
   const vals = V.map(e => e.battery);
@@ -372,7 +511,8 @@ function drawWatts(entries) {
 
   drawGrid(ctx, w, h, PAD, 4);
 
-  const t0 = +new Date(WE[0].ts), span = +new Date(WE[WE.length-1].ts) - t0 || 1;
+  const t0 = +new Date(WE[0].ts), t1w = +new Date(WE[WE.length-1].ts);
+  const span = t1w - t0 || 1;
   const xOf = e => pL + cw * ((+new Date(e.ts) - t0) / span);
   const yOf = v => pT + ch * (1 - (v - yBot) / yRange);
   const yZero = yOf(0);
@@ -390,17 +530,8 @@ function drawWatts(entries) {
     ctx.fillText(round(v) + 'W', pL - 8, pT + ch*(i/4) + 3.5);
   }
 
-  // X labels
-  axisStyle(ctx); ctx.textAlign = 'center';
-  const step = Math.ceil(WE.length / 6);
-  const labeled = new Set();
-  for (let i = 0; i < WE.length; i += step) {
-    ctx.fillText(new Date(WE[i].ts).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'}), xOf(WE[i]), h-6);
-    labeled.add(i);
-  }
-  const li = WE.length-1;
-  if (!labeled.has(li))
-    ctx.fillText(new Date(WE[li].ts).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'}), xOf(WE[li]), h-6);
+  drawXAxis(ctx, xTicks(t0, t1w), pL, pT, cw, ch, h);
+  drawCrosshair(ctx, hoverX.watts, pL, pT, cw, ch);
 
   const pts  = WE.map(e => [xOf(e), yOf(e.watts)]);
   const spts = smoothData(pts, 3);
@@ -444,6 +575,9 @@ let hoveredProcess  = null;
 let cpuBlocksLayout = [];  // [{x, bw, segments:[{proc,y,h,value,isSystem}]}]
 let lastLegendKey   = '';
 
+// Per-chart hover crosshair position (0..1 fraction of chart width, or null)
+const hoverX = { batt: null, watts: null, cpu: null };
+
 function drawCpu(entries) {
   if (state.cpuView === 'blocks') { drawCpuBlocks(entries); return; }
   drawCpuSmooth(entries);
@@ -486,17 +620,13 @@ function drawCpuSmooth(entries) {
   for (let i = 0; i <= 4; i++)
     ctx.fillText(round(yMax*(1-i/4)) + '%', pL - 8, pT + ch*(i/4) + 3.5);
 
-  const t0 = +new Date(V[0].ts), span = +new Date(V[V.length-1].ts) - t0 || 1;
+  const t0 = +new Date(V[0].ts), t1 = +new Date(V[V.length-1].ts);
+  const span = t1 - t0 || 1;
   const xOf = e => pL + cw * ((+new Date(e.ts) - t0) / span);
   const yOf = v => pT + ch * (1 - v / yMax);
 
-  // X labels
-  axisStyle(ctx); ctx.textAlign = 'center';
-  V.filter((_, i) => i % Math.ceil(V.length/6) === 0 || i === V.length-1)
-    .forEach(e => ctx.fillText(
-      new Date(e.ts).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'}),
-      xOf(e), h-6
-    ));
+  drawXAxis(ctx, xTicks(t0, t1), pL, pT, cw, ch, h);
+  drawCrosshair(ctx, hoverX.cpu, pL, pT, cw, ch);
 
   for (const proc of [...procs].reverse()) {
     const c = procColor(proc);
@@ -650,12 +780,8 @@ function drawCpuBlocks(entries) {
 
   const t0 = +new Date(windowed[0].ts);
   const t1 = +new Date(windowed[windowed.length-1].ts);
-  axisStyle(ctx); ctx.textAlign = 'center';
-  for (let i = 0; i <= 5; i++) {
-    const x  = pL + cw * (i/5);
-    const ts = new Date(t0 + (t1 - t0) * (i/5));
-    ctx.fillText(ts.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}), x, h - 6);
-  }
+  drawXAxis(ctx, xTicks(t0, t1), pL, pT, cw, ch, h);
+  drawCrosshair(ctx, hoverX.cpu, pL, pT, cw, ch);
 
   cpuBlocksLayout = [];
   const isDark = document.documentElement.getAttribute('data-theme') !== 'light';
@@ -760,8 +886,21 @@ function showCpuBlockTooltip(clientX, clientY, proc, canvasX) {
     ? `<span style="color:var(--text-tertiary);font-size:10px">System${desc ? ' · ' + h(desc) : ''}</span>`
     : `<span style="color:var(--text-tertiary);font-size:10px">User process</span>`;
 
+  // Estimate timestamp for hovered bucket from current data range
+  const windowed = applyWindow(state.allEntries);
+  let bucketTs = null;
+  if (windowed.length >= 2 && hoverX.cpu !== null) {
+    const t0b = +new Date(windowed[0].ts), t1b = +new Date(windowed[windowed.length-1].ts);
+    bucketTs = new Date(t0b + hoverX.cpu * (t1b - t0b));
+  }
+
   const tt = document.getElementById('tooltip');
-  document.getElementById('tt-time').textContent = proc;
+  document.getElementById('tt-time').textContent = bucketTs
+    ? new Date(bucketTs).toLocaleString([], {
+        month: 'short', day: 'numeric',
+        hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false,
+      }) + '  ·  ' + timeAgo(bucketTs)
+    : proc;
   document.getElementById('tt-body').innerHTML =
     `<div class="tooltip-row">
        <span class="tooltip-label">
@@ -888,13 +1027,15 @@ function renderAssertions(assertions) {
 
 /* ── Render ──────────────────────────────────────────────────────────────────*/
 function render() {
+  if (document.hidden) return;
   const E = state.allEntries;
   renderSidebar();
   drawBattery(E);
   drawWatts(E);
   drawCpu(E);
-
 }
+
+document.addEventListener('visibilitychange', () => { if (!document.hidden) render(); });
 
 /* ── Data listener ───────────────────────────────────────────────────────────*/
 if (window.api && window.api.onLogUpdate) {
@@ -940,7 +1081,10 @@ function showTooltip(mx, my, entry) {
     ? (entry.amperage * entry.voltage) / 1e6 : null;
 
   document.getElementById('tt-time').textContent =
-    new Date(entry.ts).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit',second:'2-digit'});
+    new Date(entry.ts).toLocaleString([], {
+      month: 'short', day: 'numeric',
+      hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false,
+    }) + '  ·  ' + timeAgo(entry.ts);
 
   let html = `<div class="tooltip-row">
     <span class="tooltip-label">Battery</span>
@@ -991,33 +1135,55 @@ function showTooltip(mx, my, entry) {
 
 function hideTooltip() { document.getElementById('tooltip').style.display = 'none'; }
 
+// Convert clientX to 0..1 fraction within the chart's data area
+function toHoverFrac(clientX, rect) {
+  const frac = (clientX - rect.left - PAD.left) / (rect.width - PAD.left - PAD.right);
+  return Math.max(0, Math.min(1, frac));
+}
+
 function setupHover() {
-  ['batt-canvas', 'watts-canvas'].forEach(id => {
+  // Generic handler for battery and watts (smooth line charts)
+  [
+    { id: 'batt-canvas',  key: 'batt',  draw: drawBattery },
+    { id: 'watts-canvas', key: 'watts', draw: drawWatts   },
+  ].forEach(({ id, key, draw }) => {
     const canvas = document.getElementById(id);
     canvas.addEventListener('mousemove', e => {
       const V = applyWindow(state.allEntries);
       if (V.length < 2) return;
       const rect = canvas.getBoundingClientRect();
+      hoverX[key] = toHoverFrac(e.clientX, rect);
+      draw(state.allEntries);
       showTooltip(e.clientX, e.clientY, nearestEntry(e.clientX - rect.left, rect.width, V));
     });
-    canvas.addEventListener('mouseleave', hideTooltip);
+    canvas.addEventListener('mouseleave', () => {
+      hoverX[key] = null;
+      draw(state.allEntries);
+      hideTooltip();
+    });
   });
 
+  // CPU canvas — blocks or smooth mode
   const cpuCanvas = document.getElementById('cpu-canvas');
   cpuCanvas.addEventListener('mousemove', e => {
+    const rect = cpuCanvas.getBoundingClientRect();
+    hoverX.cpu = toHoverFrac(e.clientX, rect);
     if (state.cpuView === 'blocks') {
-      handleCpuBlocksHover(e);
+      handleCpuBlocksHover(e);           // handles its own redraw + tooltip
     } else {
       const V = applyWindow(state.allEntries);
       if (V.length < 2) return;
-      const rect = cpuCanvas.getBoundingClientRect();
+      drawCpuSmooth(state.allEntries);
       showTooltip(e.clientX, e.clientY, nearestEntry(e.clientX - rect.left, rect.width, V));
     }
   });
   cpuCanvas.addEventListener('mouseleave', () => {
-    if (state.cpuView === 'blocks' && hoveredProcess !== null) {
+    hoverX.cpu = null;
+    if (state.cpuView === 'blocks') {
       hoveredProcess = null;
       drawCpuBlocks(state.allEntries);
+    } else {
+      drawCpuSmooth(state.allEntries);
     }
     hideTooltip();
   });
@@ -1141,16 +1307,21 @@ function positionSiPanel(trigger, panel) {
   const cards = Array.from(document.querySelectorAll('.chart-card'));
   const container = document.querySelector('.charts');
   let mdX = 0, mdY = 0;
-  let rafId = null;
   let saved = null; // { card, top, left, w, h } — original viewport rect before expand
 
-  function startRenderLoop() {
-    if (rafId) return;
-    (function loop() { render(); rafId = requestAnimationFrame(loop); })();
-  }
-  function stopRenderLoop() {
-    if (rafId) { cancelAnimationFrame(rafId); rafId = null; }
-  }
+  // ResizeObserver redraws only the chart whose card changed size — no RAF loop needed
+  const cardDrawMap = {
+    batt:  () => drawBattery(state.allEntries),
+    watts: () => drawWatts(state.allEntries),
+    cpu:   () => drawCpu(state.allEntries),
+  };
+  const ro = new ResizeObserver(entries => {
+    for (const entry of entries) {
+      const fn = cardDrawMap[entry.target.dataset.chartId];
+      if (fn) fn();
+    }
+  });
+  cards.forEach(c => ro.observe(c));
 
   function doExpand(targetId) {
     const card = cards.find(c => c.dataset.chartId === targetId);
@@ -1194,8 +1365,6 @@ function positionSiPanel(trigger, panel) {
     // Force reflow so the browser records the "from" values
     void card.offsetHeight;
 
-    startRenderLoop();
-
     // Now set destination — CSS transition fires from here
     card.style.top    = destT + 'px';
     card.style.left   = destL + 'px';
@@ -1206,7 +1375,6 @@ function positionSiPanel(trigger, panel) {
   function doCollapse() {
     if (!saved) return;
     const { card, top, left, w, h } = saved;
-    startRenderLoop();
     // Animate back to stored original position
     card.style.top    = top  + 'px';
     card.style.left   = left + 'px';
@@ -1233,7 +1401,6 @@ function positionSiPanel(trigger, panel) {
     // Clean up after animation finishes (use 'height' as sentinel)
     card.addEventListener('transitionend', e => {
       if (e.propertyName !== 'height' || e.target !== card) return;
-      stopRenderLoop();
       if (!state.expandedChart) restoreAll();
       render();
     });
