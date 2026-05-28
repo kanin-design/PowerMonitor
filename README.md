@@ -28,7 +28,7 @@ A native macOS menu bar app for tracking battery health, power draw, and CPU usa
 
 ## Install
 
-1. Download `PowerMonitor-1.0.0-arm64.dmg` from [Releases](../../releases/latest)
+1. Download `PowerMonitor-0.0.2-arm64.dmg` from [Releases](../../releases/latest)
 2. Open the DMG and drag **PowerMonitor.app** to your Applications folder
 3. Launch the app — on first run it installs a background logger automatically
 
@@ -38,7 +38,7 @@ A native macOS menu bar app for tracking battery health, power draw, and CPU usa
 
 ## How it works
 
-PowerMonitor installs a macOS LaunchAgent that runs a lightweight Node.js logger every 60 seconds using the bundled Electron binary — no separate runtime required. Data is written to a local SQLite database. The app reads from that database and renders charts over your chosen time range (10m, 1h, 6h, 24h, or all time).
+PowerMonitor installs a macOS LaunchAgent that runs a lightweight Node.js logger every 60 seconds using the bundled Electron binary — no separate runtime required. Data is written to a local SQLite database. The app reads from that database and renders charts over your chosen time range (10m, 1h, 6h, 24h, or 30d).
 
 The logger collects:
 - Battery percentage, charging state, amperage, voltage, time remaining
