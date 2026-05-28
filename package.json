@@ -1,7 +1,7 @@
 {
   "name": "powermonitor",
   "productName": "PowerMonitor",
-  "version": "1.0.0",
+  "version": "0.0.2",
   "description": "macOS power and battery monitor",
   "author": "Delfinsoft",
   "copyright": "Copyright © 2026 Delfinsoft",
