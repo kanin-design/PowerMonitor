@@ -3,7 +3,10 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self'; script-src 'self'; img-src 'none'; connect-src 'none';" />
+  <!-- 'unsafe-inline' on style-src is required for the dynamic per-process colors
+       (chart legends, process dots, tooltips) injected as inline styles. Safe here:
+       local-only app, script-src stays 'self', connect/img are 'none' so CSS can't exfiltrate. -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self' 'unsafe-inline'; script-src 'self'; img-src 'none'; connect-src 'none';" />
   <title>Power Monitor</title>
   <link rel="stylesheet" href="app.css" />
   <script src="theme-init.js"></script>

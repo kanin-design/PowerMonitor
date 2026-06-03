@@ -142,7 +142,7 @@ const IGNORE_ASSERT = [
   'applehibtransport', 'com.apple.powermanagement',
 ];
 function interestingAssertions(list) {
-  return list.filter(a => !IGNORE_ASSERT.some(s => a.toLowerCase().includes(s)));
+  return [...new Set(list.filter(a => !IGNORE_ASSERT.some(s => a.toLowerCase().includes(s))))];
 }
 
 /* ── Theme ───────────────────────────────────────────────────────────────────*/
@@ -353,9 +353,16 @@ function axisStyle(ctx) {
 }
 
 /* ── Smooth path (quadratic bezier through midpoints) ───────────────────────*/
+// Set to true to draw smooth bezier curves; false = raw straight line segments.
+const SMOOTH_LINES = false;
+
 // Caller must ctx.moveTo(pts[0]) before calling. Does NOT call moveTo internally.
 function smoothPath(ctx, pts) {
   if (pts.length < 2) return;
+  if (!SMOOTH_LINES) {
+    for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i][0], pts[i][1]);
+    return;
+  }
   if (pts.length === 2) { ctx.lineTo(pts[1][0], pts[1][1]); return; }
   for (let i = 0; i < pts.length - 2; i++) {
     const mx = (pts[i][0] + pts[i + 1][0]) / 2;
@@ -423,13 +430,37 @@ function lttb(pts, maxPts = 200) {
 
 /* ── Chart: Battery ──────────────────────────────────────────────────────────*/
 function drawBattery(entries) {
-  const V = lttb(applyWindow(entries), 200);
-  if (V.length < 2) { document.getElementById('batt-empty').classList.remove('hidden'); return; }
+  const windowed = applyWindow(entries);
+  if (windowed.length < 2) { document.getElementById('batt-empty').classList.remove('hidden'); return; }
+  document.getElementById('batt-empty').classList.add('hidden');
+
   const { ctx, w, h } = initCanvas('batt-canvas');
   const { top: pT, right: pR, bottom: pB, left: pL } = PAD;
   ctx.clearRect(0, 0, w, h);
 
   const ch = h - pT - pB, cw = w - pL - pR;
+
+  const t0   = +new Date(windowed[0].ts);
+  const t1   = +new Date(windowed[windowed.length - 1].ts);
+  const span = t1 - t0 || 1;
+
+  // Group consecutive samples so bars are ~5px wide.
+  // All bars are exactly equal width (cw / numBars) — no last-bar remainder.
+  const TARGET_PX    = 5;
+  const maxBars      = Math.max(1, Math.floor(cw / TARGET_PX));
+  const samplesPerBar = Math.max(1, Math.ceil(windowed.length / maxBars));
+  const numBars      = Math.ceil(windowed.length / samplesPerBar);
+  const barW         = cw / numBars;
+  const GAP          = Math.min(1, barW * 0.12);
+
+  const bars = [];
+  for (let i = 0; i < windowed.length; i += samplesPerBar) {
+    const slice    = windowed.slice(i, i + samplesPerBar);
+    const avgBatt  = slice.reduce((a, b) => a + b.battery, 0) / slice.length;
+    const charging = slice.filter(e => e.charging).length > slice.length / 2;
+    bars.push({ battery: Math.round(avgBatt), charging, ts: slice[Math.floor(slice.length / 2)].ts });
+  }
+
   drawGrid(ctx, w, h, PAD, 4);
 
   axisStyle(ctx);
@@ -438,53 +469,32 @@ function drawBattery(entries) {
     ctx.fillText(round(100 * (1 - i/4)) + '%', pL - 8, pT + ch*(i/4) + 3.5);
   }
 
-  const t0 = +new Date(V[0].ts), t1 = +new Date(V[V.length-1].ts);
-  const span = t1 - t0 || 1;
-  const xOf = e => pL + cw * ((+new Date(e.ts) - t0) / span);
-  const yOf = v => pT + ch * (1 - v / 100);
+  const yOf    = v => pT + ch * (1 - v / 100);
+  const bottom = pT + ch;
 
-  // Charging background
-  for (let i = 1; i < V.length; i++) {
-    if (V[i].charging) {
-      ctx.fillStyle = 'rgba(50,215,75,0.04)';
-      ctx.fillRect(xOf(V[i-1]), pT, xOf(V[i]) - xOf(V[i-1]), ch);
-    }
+  for (let i = 0; i < bars.length; i++) {
+    const x  = pL + i * barW + GAP / 2;
+    const bw = barW - GAP;
+    const y  = yOf(bars[i].battery);
+    const r  = Math.min(3, bw / 2);
+    ctx.beginPath();
+    ctx.roundRect(x, y, bw, bottom - y, [r, r, 0, 0]);
+    ctx.fillStyle = bars[i].charging ? 'rgba(50,215,75,0.85)' : 'rgba(50,215,75,0.45)';
+    ctx.fill();
   }
 
-  const pts  = V.map(e => [xOf(e), yOf(e.battery)]);
-  const spts = smoothData(pts, 3);
-
-  // Area
-  const g = ctx.createLinearGradient(0, pT, 0, pT + ch);
-  g.addColorStop(0, 'rgba(50,215,75,0.25)');
-  g.addColorStop(1, 'rgba(50,215,75,0)');
+  // End dot centred on last bar
+  const last = bars[bars.length - 1];
+  const dotX = pL + (bars.length - 0.5) * barW;
   ctx.beginPath();
-  ctx.moveTo(spts[0][0], pT + ch);
-  ctx.lineTo(spts[0][0], spts[0][1]);
-  smoothPath(ctx, spts);
-  ctx.lineTo(spts[spts.length-1][0], pT + ch);
-  ctx.closePath();
-  ctx.fillStyle = g; ctx.fill();
-
-  // Line
-  ctx.beginPath();
-  ctx.moveTo(spts[0][0], spts[0][1]);
-  smoothPath(ctx, spts);
-  ctx.strokeStyle = '#32D74B';
-  ctx.lineWidth = 2.5; ctx.lineJoin = 'round'; ctx.lineCap = 'round'; ctx.stroke();
-
-  // End dot
-  const l = V[V.length-1];
-  ctx.beginPath();
-  ctx.arc(xOf(l), yOf(l.battery), 4, 0, Math.PI*2);
+  ctx.arc(dotX, yOf(last.battery), 4, 0, Math.PI * 2);
   ctx.fillStyle = '#32D74B'; ctx.fill();
   ctx.strokeStyle = 'rgba(255,255,255,0.6)'; ctx.lineWidth = 1.5; ctx.stroke();
 
   drawXAxis(ctx, xTicks(t0, t1), pL, pT, cw, ch, h);
   drawCrosshair(ctx, hoverX.batt, pL, pT, cw, ch);
 
-  document.getElementById('batt-empty').classList.add('hidden');
-  const vals = V.map(e => e.battery);
+  const vals = bars.map(b => b.battery);
   document.getElementById('batt-range').textContent =
     `H: ${Math.max(...vals)}%  L: ${Math.min(...vals)}%`;
 }
@@ -504,8 +514,16 @@ function drawWatts(entries) {
   ctx.clearRect(0, 0, w, h);
 
   const allW = WE.map(e => e.watts);
-  const yTop = Math.max(...allW, 0) + 2;
-  const yBot = Math.min(...allW, 0) - 2;
+  // Round the axis to clean steps with zero on a gridline (no more 26/16/6/-3/-13)
+  const niceStep = x => {
+    if (x <= 0) return 1;
+    const base = Math.pow(10, Math.floor(Math.log10(x)));
+    const f = x / base;
+    return (f <= 1 ? 1 : f <= 2 ? 2 : f <= 5 ? 5 : 10) * base;
+  };
+  const step = niceStep((Math.max(...allW, 0) - Math.min(...allW, 0)) / 4 || 1);
+  const yBot = Math.floor(Math.min(...allW, 0) / step) * step;
+  const yTop = yBot + 4 * step;
   const yRange = yTop - yBot || 1;
   const ch = h - pT - pB, cw = w - pL - pR;
 
@@ -526,24 +544,23 @@ function drawWatts(entries) {
 
   axisStyle(ctx); ctx.textAlign = 'right';
   for (let i = 0; i <= 4; i++) {
-    const v = yTop*(1-i/4) + yBot*(i/4);
-    ctx.fillText(round(v) + 'W', pL - 8, pT + ch*(i/4) + 3.5);
+    const v = yTop - step * i;
+    ctx.fillText((+v.toFixed(1)) + 'W', pL - 8, pT + ch*(i/4) + 3.5);
   }
 
   drawXAxis(ctx, xTicks(t0, t1w), pL, pT, cw, ch, h);
   drawCrosshair(ctx, hoverX.watts, pL, pT, cw, ch);
 
-  const pts  = WE.map(e => [xOf(e), yOf(e.watts)]);
-  const spts = smoothData(pts, 3);
+  const pts = WE.map(e => [xOf(e), yOf(e.watts)]);
 
   const drawFill = (color, clipY, clipH) => {
     ctx.save();
     ctx.beginPath(); ctx.rect(pL, clipY, cw, clipH); ctx.clip();
     ctx.beginPath();
-    ctx.moveTo(spts[0][0], yZero);
-    ctx.lineTo(spts[0][0], spts[0][1]);
-    smoothPath(ctx, spts);
-    ctx.lineTo(spts[spts.length-1][0], yZero);
+    ctx.moveTo(pts[0][0], yZero);
+    ctx.lineTo(pts[0][0], pts[0][1]);
+    smoothPath(ctx, pts);
+    ctx.lineTo(pts[pts.length-1][0], yZero);
     ctx.closePath();
     ctx.fillStyle = color; ctx.fill();
     ctx.restore();
@@ -555,8 +572,8 @@ function drawWatts(entries) {
     ctx.save();
     ctx.beginPath(); ctx.rect(pL, clipY, cw, clipH); ctx.clip();
     ctx.beginPath();
-    ctx.moveTo(spts[0][0], spts[0][1]);
-    smoothPath(ctx, spts);
+    ctx.moveTo(pts[0][0], pts[0][1]);
+    smoothPath(ctx, pts);
     ctx.strokeStyle = color; ctx.lineWidth = 2.5;
     ctx.lineJoin = 'round'; ctx.lineCap = 'round'; ctx.stroke();
     ctx.restore();
@@ -564,10 +581,11 @@ function drawWatts(entries) {
   drawLine('#32D74B', pT,    yZero - pT);
   drawLine('#FF9F0A', yZero, pT + ch - yZero);
 
-  const avg = allW.reduce((a,b) => a+b, 0) / allW.length;
-  const peak = Math.max(...allW.map(Math.abs));
-  document.getElementById('watts-range').textContent =
-    `Avg: ${Math.abs(avg).toFixed(1)}W  Peak: ${peak.toFixed(1)}W`;
+  // Summary reflects power DRAW only — discharge samples, ignoring charging/plugged-in.
+  const draw = allW.filter(x => x < 0).map(x => -x);
+  document.getElementById('watts-range').textContent = draw.length
+    ? `Avg: ${(draw.reduce((a,b)=>a+b,0) / draw.length).toFixed(1)}W  Peak: ${Math.max(...draw).toFixed(1)}W`
+    : 'On charger';
 }
 
 /* ── Chart: CPU ──────────────────────────────────────────────────────────────*/
@@ -635,24 +653,23 @@ function drawCpuSmooth(entries) {
     const isOtherHovered = hoveredProcess && hoveredProcess !== proc;
     const alpha = isHovered ? 1 : isOtherHovered ? 0.05 : 0.18;
 
-    const pts  = V.map(e => [xOf(e), yOf(e.cpus[proc] || 0)]);
-    const spts = smoothData(pts, 3);
+    const pts = V.map(e => [xOf(e), yOf(e.cpus[proc] || 0)]);
 
     // Area
     ctx.globalAlpha = alpha * 0.5;
     ctx.beginPath();
-    ctx.moveTo(spts[0][0], pT + ch);
-    ctx.lineTo(spts[0][0], spts[0][1]);
-    smoothPath(ctx, spts);
-    ctx.lineTo(spts[spts.length-1][0], pT + ch);
+    ctx.moveTo(pts[0][0], pT + ch);
+    ctx.lineTo(pts[0][0], pts[0][1]);
+    smoothPath(ctx, pts);
+    ctx.lineTo(pts[pts.length-1][0], pT + ch);
     ctx.closePath();
     ctx.fillStyle = `rgba(${rgb},0.15)`; ctx.fill();
 
     // Line
     ctx.globalAlpha = alpha;
     ctx.beginPath();
-    ctx.moveTo(spts[0][0], spts[0][1]);
-    smoothPath(ctx, spts);
+    ctx.moveTo(pts[0][0], pts[0][1]);
+    smoothPath(ctx, pts);
     ctx.strokeStyle = c;
     ctx.lineWidth = isHovered ? 2.5 : 1.5;
     ctx.lineJoin = 'round'; ctx.stroke();
@@ -970,14 +987,48 @@ function renderSidebar() {
     wvLabel.style.color = '';
   }
 
-  renderProcessList(l.cpus, l.mem || {});
+  renderProcessList(l.cpus, l.mem || {}, l.procUsers || {});
   renderAssertions(l.assertions);
+  renderMemBar();
+}
 
-  // Free RAM below process list
-  const memFreeEl = document.getElementById('sb-mem-free');
-  if (memFreeEl && state.sysInfo && state.sysInfo.memFree) {
-    memFreeEl.textContent = state.sysInfo.memFree + ' free';
+// Parse a memory string ("16 GB", "1.2 GB", "512 MB") to GB float
+function parseMemGB(str) {
+  if (!str) return null;
+  const m = String(str).match(/([\d.]+)\s*(TB|GB|MB|KB)?/i);
+  if (!m) return null;
+  const n = parseFloat(m[1]);
+  const u = (m[2] || 'GB').toUpperCase();
+  return u === 'TB' ? n * 1024 : u === 'MB' ? n / 1024 : u === 'KB' ? n / 1048576 : n;
+}
+
+function renderMemBar() {
+  const el = document.getElementById('sb-mem-free');
+  if (!el) return;
+  const si = state.sysInfo;
+  const totalGB = si && parseMemGB(si.memory);
+  const freeGB  = si && parseMemGB(si.memFree);
+  if (!totalGB || freeGB == null) {
+    el.innerHTML = si && si.memFree
+      ? `<span class="mem-bar-sub">${h(si.memFree)} free</span>` : '';
+    return;
   }
+  const usedGB  = Math.max(0, totalGB - freeGB);
+  const pct = Math.round(Math.max(0, Math.min(1, usedGB / totalGB)) * 100);
+  el.innerHTML =
+    `<div class="mem-card">
+       <div class="mem-card-top">
+         <span class="mem-card-label">Memory</span>
+         <span class="mem-card-value">${pct}<span class="mem-card-unit">%</span></span>
+       </div>
+       <div class="mem-bar-track">
+         <div class="mem-bar-fill" style="width:${pct}%"></div>
+       </div>
+       <div class="mem-card-foot">
+         <span>${usedGB.toFixed(1)} GB used</span>
+         <span>${freeGB.toFixed(1)} GB free</span>
+       </div>
+     </div>`;
 }
 
 function formatMem(kb) {
@@ -986,7 +1037,7 @@ function formatMem(kb) {
   return kb + 'KB';
 }
 
-function renderProcessList(cpus, mem = {}) {
+function renderProcessList(cpus, mem = {}, procUsers = {}) {
   const sorted = Object.entries(cpus).sort((a,b) => b[1]-a[1]).slice(0, 8);
 
   if (!sorted.length) {
@@ -995,8 +1046,17 @@ function renderProcessList(cpus, mem = {}) {
     return;
   }
 
+  // Match the CPU chart's colour scheme: system processes get grey shades by rank,
+  // user processes get palette colours — so a sidebar dot maps to its chart band.
+  const isDark   = document.documentElement.getAttribute('data-theme') !== 'light';
+  const sysNames = sorted.map(([n]) => n).filter(n => isSystemProcess(n, procUsers[n]));
+  const colorFor = name => {
+    const r = sysNames.indexOf(name);
+    return r !== -1 ? sysGrey(r, sysNames.length, isDark) : procColor(name);
+  };
+
   document.getElementById('proc-list').innerHTML = sorted.map(([name, cpu]) => {
-    const c = procColor(name);
+    const c = colorFor(name);
     const rss = mem[name];
 
     const memStr = rss ? formatMem(rss) : '';

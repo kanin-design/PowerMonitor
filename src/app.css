@@ -778,11 +778,81 @@ html, body {
 .si-red    { color: var(--color-red);    }
 .si-loading { font-size: 12px; color: var(--text-tertiary); }
 
-/* ── Sidebar free RAM row ────────────────────────────────────────────────────*/
+/* ── Sidebar memory card (mirrors .status-block) ─────────────────────────────*/
 .mem-free-row {
+  margin-top: var(--space-3);
+}
+
+.mem-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 14px;
+  background: rgba(0, 0, 0, 0.20);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border-radius: 10px;
+  border: 1px solid rgba(255,255,255,0.07);
+}
+
+[data-theme="light"] .mem-card {
+  background: rgba(0, 0, 0, 0.06);
+  border-color: rgba(0,0,0,0.08);
+}
+
+.mem-card-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+}
+
+.mem-card-label {
   font-size: 11px;
-  color: var(--text-quaternary);
-  padding-top: 4px;
+  font-weight: 500;
+  color: var(--text-tertiary);
+}
+
+.mem-card-value {
+  font-size: 22px;
+  font-weight: 300;
+  line-height: 1;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+  text-shadow: 0 1px 6px rgba(0,0,0,0.4);
+}
+
+.mem-card-unit {
+  font-size: 13px;
+  font-weight: 400;
+  margin-left: 1px;
+  opacity: 0.55;
+}
+
+.mem-bar-track {
+  position: relative;
+  height: 10px;
+  border-radius: 5px;
+  background: rgba(255,255,255,0.10);
+  border: 1px solid var(--border-standard);
+  overflow: hidden;
+}
+
+[data-theme="light"] .mem-bar-track {
+  background: rgba(0,0,0,0.05);
+}
+
+.mem-bar-fill {
+  height: 100%;
+  border-radius: 5px 0 0 5px;
+  background: var(--text-tertiary);
+  transition: width 0.4s ease;
+}
+
+.mem-card-foot {
+  display: flex;
+  justify-content: space-between;
+  font-size: 11px;
+  color: var(--text-tertiary);
   font-variant-numeric: tabular-nums;
 }
 
