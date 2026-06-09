@@ -309,32 +309,89 @@ function getSystemInfo() {
   }
 }
 
-/* ── Free memory ─────────────────────────────────────────────────────────── */
-function getMemFree() {
+/* ── Live data (1s) — IORegistry + vm_stat, never touches the DB ─────────── */
+function getLiveData() {
   try {
-    const vmstat = execSync('vm_stat 2>/dev/null', { timeout: 2000 }).toString();
-    const free     = parseInt(vmstat.match(/Pages free:\s+(\d+)/)?.[1]     || 0);
-    const inactive = parseInt(vmstat.match(/Pages inactive:\s+(\d+)/)?.[1] || 0);
-    const mb = Math.round((free + inactive) * 4096 / 1048576);
-    return mb >= 1024 ? (mb / 1024).toFixed(1) + ' GB' : mb + ' MB';
+    const io = execSync('ioreg -r -c AppleSmartBattery -w0 2>/dev/null', { timeout: 2000 }).toString();
+
+    const num  = key => { const m = io.match(new RegExp(`"${key}"\\s*=\\s*(-?\\d+)`)); return m ? parseInt(m[1]) : null; };
+    const str  = key => { const m = io.match(new RegExp(`"${key}"\\s*=\\s*"([^"]*)"`)); return m ? m[1] : null; };
+
+    const battery  = num('CurrentCapacity');
+    const connected = /"ExternalConnected"\s*=\s*Yes/.test(io);
+    const charging  = connected && /"IsCharging"\s*=\s*Yes/.test(io);
+
+    // Amperage (stored unsigned 64-bit in ioreg — convert to signed)
+    let amperage = num('Amperage');
+    if (amperage !== null && amperage > 9223372036854775807) amperage = amperage - 18446744073709551616;
+
+    const voltage     = num('Voltage');           // mV
+    // 65535 (0xFFFF) is the "calculating, not ready" sentinel — ignore it
+    const timeRemRaw  = num('TimeRemaining');
+    const timeRemMins = (timeRemRaw != null && timeRemRaw < 65535) ? timeRemRaw : null;
+
+    // Adapter details — negotiated USB-PD contract
+    let adapter = null;
+    const adMatch = io.match(/"AdapterDetails"\s*=\s*\{([^}]*)\}/);
+    if (adMatch) {
+      const ad = adMatch[1];
+      const adNum = k => { const m = ad.match(new RegExp(`"${k}"=(\\d+)`)); return m ? parseInt(m[1]) : null; };
+      const watts   = adNum('Watts');
+      const voltage_mv = adNum('AdapterVoltage');
+      const desc    = (ad.match(/"Description"="([^"]*)"/) || [])[1] || null;
+      if (watts) adapter = { watts, voltage: voltage_mv ? Math.round(voltage_mv / 1000) : null, desc };
+    }
+
+    // Free + inactive memory pages → GB/MB string
+    let memFree = null;
+    try {
+      const vm = execSync('vm_stat 2>/dev/null', { timeout: 1000 }).toString();
+      const free     = parseInt(vm.match(/Pages free:\s+(\d+)/)?.[1]     || 0);
+      const inactive = parseInt(vm.match(/Pages inactive:\s+(\d+)/)?.[1] || 0);
+      const mb = Math.round((free + inactive) * 4096 / 1048576);
+      memFree = mb >= 1024 ? (mb / 1024).toFixed(1) + ' GB' : mb + ' MB';
+    } catch {}
+
+    const timeLeft = timeRemMins != null
+      ? `${Math.floor(timeRemMins / 60)}:${String(timeRemMins % 60).padStart(2, '0')}`
+      : null;
+
+    return { battery, charging, connected, amperage, voltage, timeLeft, adapter, memFree };
   } catch { return null; }
 }
 
-/* ── Send to renderer ────────────────────────────────────────────────────── */
-let lastEntryTs = null;
-let sysInfo = null;
+function sendLiveData() {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  const live = getLiveData();
+  if (!live) return;
+  try { mainWindow.webContents.send('live-update', live); } catch {}
+}
+
+/* ── Chart data — DB query, smart-scheduled to fire when new data expected ── */
+let lastEntryTs  = null;
+let sysInfo      = null;
+let dbTimer      = null;
+
+function scheduleNextDbQuery(lastTs) {
+  clearTimeout(dbTimer);
+  // Logger runs every 60s. Fire 1.5s after we expect the next entry.
+  const nextExpected = lastTs ? +new Date(lastTs) + 61500 : Date.now();
+  const delay = Math.max(1000, nextExpected - Date.now());
+  dbTimer = setTimeout(queryAndSend, delay);
+}
 
 function queryAndSend() {
   if (!db) return;
   const entries = queryEntries(settings.timeRange || 43200);
-  if (!entries.length) return;
+  if (!entries.length) { scheduleNextDbQuery(null); return; }
   const latest = entries[entries.length - 1];
+  scheduleNextDbQuery(latest.ts);      // schedule next check before early-exit
   if (latest.ts === lastEntryTs) return;
   lastEntryTs = latest.ts;
   if (mainWindow && !mainWindow.isDestroyed()) {
     try {
-      const info = sysInfo ? { ...sysInfo, memFree: getMemFree() } : null;
-      mainWindow.webContents.send("log-update", { entries, sysInfo: info });
+      const info = sysInfo ? { ...sysInfo } : null;
+      mainWindow.webContents.send('log-update', { entries, sysInfo: info });
     } catch {}
   }
 }
@@ -488,11 +545,10 @@ app.whenReady().then(async () => {
     const safe = typeof min === 'number' && Number.isFinite(min) && min >= 0 ? Math.round(min) : 43200;
     settings.timeRange = safe;
     saveSettings();
-    lastEntryTs = null;  // force re-fetch with new time window
+    lastEntryTs = null;   // force re-fetch with new time window
+    clearTimeout(dbTimer);
     queryAndSend();
   });
-
-  ipcMain.handle('get-mem-free', () => getMemFree());
 
   mainWindow.webContents.once('did-finish-load', () => {
     mainWindow.webContents.send('settings', {
@@ -500,12 +556,35 @@ app.whenReady().then(async () => {
       timeRange: settings.timeRange,
       cpuView:   settings.cpuView || 'blocks',
     });
+    // Reset so queryAndSend always delivers on first real page load,
+    // even if focus fired early and set lastEntryTs before the page was ready.
+    lastEntryTs = null;
     queryAndSend();
+    sendLiveData();
   });
 
-  let pollInterval = setInterval(queryAndSend, 5000);
-  mainWindow.on('blur',  () => { clearInterval(pollInterval); pollInterval = null; });
-  mainWindow.on('focus', () => { if (!pollInterval) { queryAndSend(); pollInterval = setInterval(queryAndSend, 5000); } });
+  // 1s live loop — pauses when window is hidden/blurred, resumes on focus/show
+  let liveInterval = null;
+
+  function startLive() {
+    if (liveInterval) return;
+    sendLiveData();
+    liveInterval = setInterval(sendLiveData, 1000);
+  }
+  function stopLive() {
+    clearInterval(liveInterval);
+    liveInterval = null;
+  }
+
+  mainWindow.on('focus', () => {
+    startLive();
+    // Also re-query DB immediately on focus in case we missed a cycle while hidden
+    queryAndSend();
+  });
+  mainWindow.on('blur', stopLive);
+
+  // Start live loop immediately (window starts focused)
+  startLive();
 });
 
 app.on("window-all-closed", () => {

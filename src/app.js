@@ -6,11 +6,12 @@ function h(s) { return String(s).replace(/[&<>"']/g, c => ESC[c]); }
 
 /* ── State ─────────────────────────────────────────────────────────────────── */
 const state = {
-  allEntries: [],
-  windowMs: 0,
-  sysInfo: null,
+  entries:      [],     // chart history from DB (~60s updates)
+  latest:       null,   // most recent values — set from DB on first load, then overwritten by 1s IORegistry loop
+  sysInfo:      null,   // static hardware info, set once at startup
   expandedChart: null,
-  cpuView: 'blocks',
+  windowMs:     0,
+  cpuView:      'blocks',
 };
 
 /* ── Process color palette ─────────────────────────────────────────────────── */
@@ -165,7 +166,7 @@ if (window.api && window.api.onSettings) {
     }
     if (cpuView === 'smooth' || cpuView === 'blocks') {
       state.cpuView = cpuView;
-      if (state.allEntries.length) drawCpu(state.allEntries);
+      if (state.entries.length) drawCpu(state.entries);
     }
   });
 }
@@ -696,13 +697,13 @@ function drawCpuSmooth(entries) {
 
   legendEl.onmouseenter = e => {
     const item = e.target.closest('.legend-item');
-    if (item) { hoveredProcess = item.dataset.proc; drawCpu(state.allEntries); }
+    if (item) { hoveredProcess = item.dataset.proc; drawCpu(state.entries); }
   };
-  legendEl.onmouseleave = () => { hoveredProcess = null; drawCpu(state.allEntries); };
+  legendEl.onmouseleave = () => { hoveredProcess = null; drawCpu(state.entries); };
   legendEl.onmouseover = e => {
     const item = e.target.closest('.legend-item');
     if (item && item.dataset.proc !== hoveredProcess) {
-      hoveredProcess = item.dataset.proc; drawCpu(state.allEntries);
+      hoveredProcess = item.dataset.proc; drawCpu(state.entries);
     }
   };
 
@@ -849,12 +850,12 @@ function drawCpuBlocks(entries) {
       const item = e.target.closest('.legend-item');
       if (item && item.dataset.proc !== hoveredProcess) {
         hoveredProcess = item.dataset.proc;
-        drawCpuBlocks(state.allEntries);
+        drawCpuBlocks(state.entries);
       }
     };
     legendEl.onmouseleave = () => {
       hoveredProcess = null;
-      drawCpuBlocks(state.allEntries);
+      drawCpuBlocks(state.entries);
     };
   }
 
@@ -877,7 +878,7 @@ function handleCpuBlocksHover(e) {
 
   if (found !== hoveredProcess) {
     hoveredProcess = found;
-    drawCpuBlocks(state.allEntries);
+    drawCpuBlocks(state.entries);
   }
 
   if (found) {
@@ -895,7 +896,7 @@ function showCpuBlockTooltip(clientX, clientY, proc, canvasX) {
   const color    = seg ? seg.color : procColor(proc);
 
   // Determine user owner from last entries
-  const lastWithUsers = [...state.allEntries].reverse().find(e => e.procUsers && e.procUsers[proc]);
+  const lastWithUsers = [...state.entries].reverse().find(e => e.procUsers && e.procUsers[proc]);
   const owner  = lastWithUsers ? lastWithUsers.procUsers[proc] : null;
   const desc   = SYSTEM_PROC_INFO[proc];
 
@@ -904,7 +905,7 @@ function showCpuBlockTooltip(clientX, clientY, proc, canvasX) {
     : `<span style="color:var(--text-tertiary);font-size:10px">User process</span>`;
 
   // Estimate timestamp for hovered bucket from current data range
-  const windowed = applyWindow(state.allEntries);
+  const windowed = applyWindow(state.entries);
   let bucketTs = null;
   if (windowed.length >= 2 && hoverX.cpu !== null) {
     const t0b = +new Date(windowed[0].ts), t1b = +new Date(windowed[windowed.length-1].ts);
@@ -943,42 +944,52 @@ function applyWindow(entries) {
 
 /* ── Sidebar ─────────────────────────────────────────────────────────────────*/
 function renderSidebar() {
-  const entries = state.allEntries;
-  if (!entries.length) return;
-  const l = entries[entries.length-1];
+  const live = state.latest;
+  if (!live) return;
 
   // Battery %
-  document.getElementById('sb-batt-num').textContent = l.battery + '%';
+  if (live.battery != null)
+    document.getElementById('sb-batt-num').textContent = live.battery + '%';
 
-  // Status dot + text
-  const isCharging = l.amperage != null && l.amperage > 0;
+  // connected = charger physically present (ExternalConnected) — updates immediately on plug/unplug
+  // charging  = current actively flowing in (IsCharging) — may lag or be false at ~100% optimization
+  const connected  = live.connected;
+  const isCharging = live.charging;
+
+  // State label and dot: driven by connected, not IsCharging
   const stateEl = document.getElementById('sb-state');
-  stateEl.querySelector('.state-text').textContent = isCharging ? 'Charging' : 'On Battery';
-  stateEl.className = 'battery-state ' + (isCharging ? 'charging' : 'discharging');
+  stateEl.querySelector('.state-text').textContent = connected ? 'Charging' : 'On Battery';
+  stateEl.className = 'battery-state ' + (connected ? 'charging' : 'discharging');
 
   // Time left
   const tl = document.getElementById('sb-timeleft');
   const tlLabel = document.getElementById('sb-timeleft-label');
-  if (l.timeLeft) {
-    const [hh, mm] = l.timeLeft.split(':').map(Number);
+  if (live.timeLeft) {
+    const [hh, mm] = live.timeLeft.split(':').map(Number);
     tl.textContent = hh > 0 ? `${hh}h ${mm}m` : `${mm}m`;
-    tlLabel.textContent = isCharging ? 'until full' : 'remaining';
-    tl.style.color = isCharging ? 'var(--color-green)'
+    tlLabel.textContent = connected ? 'until full' : 'remaining';
+    tl.style.color = connected ? 'var(--color-green)'
       : hh < 1 ? 'var(--color-red)' : hh < 3 ? 'var(--color-orange)' : 'var(--text-primary)';
   } else {
     tl.textContent = '—';
-    tlLabel.textContent = isCharging ? 'until full' : 'remaining';
+    tlLabel.textContent = connected ? 'until full' : 'remaining';
     tl.style.color = 'var(--text-tertiary)';
   }
 
-  // Watts
+  // Watts + adapter info
   const wv = document.getElementById('sb-watts');
   const wvLabel = document.getElementById('sb-watts-label');
-  if (l.amperage != null && l.voltage != null) {
-    const watts = (l.amperage * l.voltage) / 1e6;
+  if (live.amperage != null && live.voltage != null) {
+    const watts = (live.amperage * live.voltage) / 1e6;
     wv.textContent = Math.abs(watts).toFixed(1) + 'W';
     wv.style.color = watts >= 0 ? 'var(--color-green)' : 'var(--color-orange)';
-    wvLabel.textContent = watts >= 0 ? 'charging' : 'discharging';
+    // Sub-label: adapter info when connected (e.g. "charging · 45W @ 9V")
+    if (connected && live.adapter) {
+      const a = live.adapter;
+      wvLabel.textContent = `charging · ${a.watts}W @ ${a.voltage}V`;
+    } else {
+      wvLabel.textContent = watts >= 0 ? 'charging' : 'discharging';
+    }
     wvLabel.style.color = '';
   } else {
     wv.textContent = '—';
@@ -987,9 +998,15 @@ function renderSidebar() {
     wvLabel.style.color = '';
   }
 
-  renderProcessList(l.cpus, l.mem || {}, l.procUsers || {});
-  renderAssertions(l.assertions);
-  renderMemBar();
+  // Process list and assertions come from last DB entry (don't change every second)
+  const entries = state.entries;
+  if (entries.length) {
+    const l = entries[entries.length - 1];
+    renderProcessList(l.cpus, l.mem || {}, l.procUsers || {});
+    renderAssertions(l.assertions);
+  }
+
+  renderMemBar(live.memFree);
 }
 
 // Parse a memory string ("16 GB", "1.2 GB", "512 MB") to GB float
@@ -1002,15 +1019,15 @@ function parseMemGB(str) {
   return u === 'TB' ? n * 1024 : u === 'MB' ? n / 1024 : u === 'KB' ? n / 1048576 : n;
 }
 
-function renderMemBar() {
+function renderMemBar(memFreeStr) {
   const el = document.getElementById('sb-mem-free');
   if (!el) return;
   const si = state.sysInfo;
   const totalGB = si && parseMemGB(si.memory);
-  const freeGB  = si && parseMemGB(si.memFree);
+  const freeGB  = parseMemGB(memFreeStr);
   if (!totalGB || freeGB == null) {
-    el.innerHTML = si && si.memFree
-      ? `<span class="mem-bar-sub">${h(si.memFree)} free</span>` : '';
+    el.innerHTML = memFreeStr
+      ? `<span class="mem-bar-sub">${h(memFreeStr)} free</span>` : '';
     return;
   }
   const usedGB  = Math.max(0, totalGB - freeGB);
@@ -1088,8 +1105,7 @@ function renderAssertions(assertions) {
 /* ── Render ──────────────────────────────────────────────────────────────────*/
 function render() {
   if (document.hidden) return;
-  const E = state.allEntries;
-  renderSidebar();
+  const E = state.entries;
   drawBattery(E);
   drawWatts(E);
   drawCpu(E);
@@ -1097,17 +1113,37 @@ function render() {
 
 document.addEventListener('visibilitychange', () => { if (!document.hidden) render(); });
 
-/* ── Data listener ───────────────────────────────────────────────────────────*/
+/* ── Data listeners ──────────────────────────────────────────────────────────*/
+// Chart data — fires ~every 60s when logger writes a new DB entry
 if (window.api && window.api.onLogUpdate) {
   window.api.onLogUpdate((data) => {
-    state.allEntries = data.entries || data;
+    state.entries = data.entries || data;
     if (data.sysInfo) {
       state.sysInfo = data.sysInfo;
       const si = data.sysInfo;
       document.getElementById('main-title').textContent =
         si.chip ? `${si.model} · ${si.chip}` : si.model || 'MacBook';
     }
+    // Seed state.latest from last DB entry so sidebar shows immediately
+    // before the first live-update arrives (~1s after load)
+    if (!state.latest && state.entries.length) {
+      const l = state.entries[state.entries.length - 1];
+      state.latest = {
+        battery:  l.battery,  charging: l.charging,
+        amperage: l.amperage, voltage:  l.voltage,
+        timeLeft: l.timeLeft, adapter:  null, memFree: null,
+      };
+      renderSidebar();
+    }
     render();
+  });
+}
+
+// Live sidebar — fires every 1s from IORegistry, no DB involved
+if (window.api && window.api.onLiveUpdate) {
+  window.api.onLiveUpdate((live) => {
+    state.latest = live;
+    renderSidebar();
   });
 }
 
@@ -1209,16 +1245,16 @@ function setupHover() {
   ].forEach(({ id, key, draw }) => {
     const canvas = document.getElementById(id);
     canvas.addEventListener('mousemove', e => {
-      const V = applyWindow(state.allEntries);
+      const V = applyWindow(state.entries);
       if (V.length < 2) return;
       const rect = canvas.getBoundingClientRect();
       hoverX[key] = toHoverFrac(e.clientX, rect);
-      draw(state.allEntries);
+      draw(state.entries);
       showTooltip(e.clientX, e.clientY, nearestEntry(e.clientX - rect.left, rect.width, V));
     });
     canvas.addEventListener('mouseleave', () => {
       hoverX[key] = null;
-      draw(state.allEntries);
+      draw(state.entries);
       hideTooltip();
     });
   });
@@ -1231,9 +1267,9 @@ function setupHover() {
     if (state.cpuView === 'blocks') {
       handleCpuBlocksHover(e);           // handles its own redraw + tooltip
     } else {
-      const V = applyWindow(state.allEntries);
+      const V = applyWindow(state.entries);
       if (V.length < 2) return;
-      drawCpuSmooth(state.allEntries);
+      drawCpuSmooth(state.entries);
       showTooltip(e.clientX, e.clientY, nearestEntry(e.clientX - rect.left, rect.width, V));
     }
   });
@@ -1241,9 +1277,9 @@ function setupHover() {
     hoverX.cpu = null;
     if (state.cpuView === 'blocks') {
       hoveredProcess = null;
-      drawCpuBlocks(state.allEntries);
+      drawCpuBlocks(state.entries);
     } else {
-      drawCpuSmooth(state.allEntries);
+      drawCpuSmooth(state.entries);
     }
     hideTooltip();
   });
@@ -1340,22 +1376,12 @@ function positionSiPanel(trigger, panel) {
   const panel   = document.getElementById('model-tooltip');
   if (!trigger || !panel) return;
 
-  trigger.addEventListener('mouseenter', async () => {
-    // Show immediately with cached memFree
-    panel.innerHTML = buildSiPanel(state.sysInfo, state.sysInfo && state.sysInfo.memFree);
+  trigger.addEventListener('mouseenter', () => {
+    // Use live memFree from the 1s IORegistry loop
+    const memFree = state.latest && state.latest.memFree;
+    panel.innerHTML = buildSiPanel(state.sysInfo, memFree);
     panel.style.display = 'block';
     positionSiPanel(trigger, panel);
-
-    // Fetch a fresh memFree reading and update just that field
-    if (window.api && window.api.getMemFree) {
-      try {
-        const fresh = await window.api.getMemFree();
-        if (fresh && panel.style.display !== 'none') {
-          panel.innerHTML = buildSiPanel(state.sysInfo, fresh);
-          positionSiPanel(trigger, panel);
-        }
-      } catch {}
-    }
   });
 
   trigger.addEventListener('mouseleave', () => { panel.style.display = 'none'; });
@@ -1371,9 +1397,9 @@ function positionSiPanel(trigger, panel) {
 
   // ResizeObserver redraws only the chart whose card changed size — no RAF loop needed
   const cardDrawMap = {
-    batt:  () => drawBattery(state.allEntries),
-    watts: () => drawWatts(state.allEntries),
-    cpu:   () => drawCpu(state.allEntries),
+    batt:  () => drawBattery(state.entries),
+    watts: () => drawWatts(state.entries),
+    cpu:   () => drawCpu(state.entries),
   };
   const ro = new ResizeObserver(entries => {
     for (const entry of entries) {
