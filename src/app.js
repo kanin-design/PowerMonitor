@@ -982,13 +982,16 @@ function renderSidebar() {
   if (live.amperage != null && live.voltage != null) {
     const watts = (live.amperage * live.voltage) / 1e6;
     wv.textContent = Math.abs(watts).toFixed(1) + 'W';
-    wv.style.color = watts >= 0 ? 'var(--color-green)' : 'var(--color-orange)';
+    // Gate "charging" (and green) on connected — amperage can briefly read
+    // positive right after unplug, and a disconnected Mac is never charging.
+    const gaining = connected && watts >= 0;
+    wv.style.color = gaining ? 'var(--color-green)' : 'var(--color-orange)';
     // Sub-label: adapter info when connected (e.g. "charging · 45W @ 9V")
     if (connected && live.adapter) {
       const a = live.adapter;
-      wvLabel.textContent = `charging · ${a.watts}W @ ${a.voltage}V`;
+      wvLabel.textContent = `charging · ${a.watts}W${a.voltage ? ` @ ${a.voltage}V` : ''}`;
     } else {
-      wvLabel.textContent = watts >= 0 ? 'charging' : 'discharging';
+      wvLabel.textContent = gaining ? 'charging' : 'discharging';
     }
     wvLabel.style.color = '';
   } else {

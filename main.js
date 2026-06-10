@@ -1,4 +1,4 @@
-const { app, BrowserWindow, nativeTheme, Menu, ipcMain } = require("electron");
+const { app, BrowserWindow, nativeTheme, Menu, ipcMain, powerMonitor } = require("electron");
 const Database = require("better-sqlite3");
 const { join } = require("path");
 const { homedir } = require("os");
@@ -334,8 +334,10 @@ function getLiveData() {
     // Amperage (printed as unsigned 64-bit in ioreg). Convert to signed in
     // BigInt — doubles can't represent 2^64-range values and quantize the
     // result to multiples of 2048 (e.g. -578 mA reads as 0).
+    // Prefer InstantAmperage: the plain Amperage key is filtered and lags
+    // several seconds behind plug/unplug, briefly showing the old sign.
     let amperage = null;
-    const am = io.match(/"Amperage"\s*=\s*(-?\d+)/);
+    const am = io.match(/"InstantAmperage"\s*=\s*(-?\d+)/) || io.match(/"Amperage"\s*=\s*(-?\d+)/);
     if (am) {
       let v = BigInt(am[1]);
       if (v > 9223372036854775807n) v -= 18446744073709551616n;
@@ -347,16 +349,18 @@ function getLiveData() {
     const timeRemRaw  = num('TimeRemaining');
     const timeRemMins = (timeRemRaw != null && timeRemRaw < 65535) ? timeRemRaw : null;
 
-    // Adapter details — negotiated USB-PD contract
+    // Adapter details — negotiated USB-PD contract. ioreg can print several
+    // AdapterDetails dicts (an empty {"FamilyCode"=0} when unplugged); scan
+    // them all and use the one that actually carries a wattage.
     let adapter = null;
-    const adMatch = io.match(/"AdapterDetails"\s*=\s*\{([^}]*)\}/);
-    if (adMatch) {
+    for (const adMatch of io.matchAll(/"AdapterDetails"\s*=\s*\{([^}]*)\}/g)) {
       const ad = adMatch[1];
+      if (!ad.includes('"Watts"')) continue;
       const adNum = k => { const m = ad.match(new RegExp(`"${k}"=(\\d+)`)); return m ? parseInt(m[1]) : null; };
       const watts   = adNum('Watts');
       const voltage_mv = adNum('AdapterVoltage');
       const desc    = (ad.match(/"Description"="([^"]*)"/) || [])[1] || null;
-      if (watts) adapter = { watts, voltage: voltage_mv ? Math.round(voltage_mv / 1000) : null, desc };
+      if (watts) { adapter = { watts, voltage: voltage_mv ? Math.round(voltage_mv / 1000) : null, desc }; break; }
     }
 
     // Free + inactive memory pages → GB/MB string
@@ -606,6 +610,15 @@ app.whenReady().then(async () => {
     queryAndSend();
   });
   mainWindow.on('blur', stopLive);
+
+  // Instant plug/unplug + wake updates — these fire even while the window is
+  // blurred and the 1s loop is paused, so the sidebar never shows a stale
+  // charging state.
+  // Second sample 3s later catches the settled charge/discharge current.
+  const liveBurst = () => { sendLiveData(); setTimeout(sendLiveData, 3000); };
+  powerMonitor.on('on-ac',      liveBurst);
+  powerMonitor.on('on-battery', liveBurst);
+  powerMonitor.on('resume', () => { liveBurst(); queryAndSend(); });
 
   // Start live loop immediately (window starts focused)
   startLive();
