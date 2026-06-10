@@ -78,6 +78,7 @@ npx @electron/packager . "${APP_NAME}" \
   --arch=arm64 \
   --overwrite \
   --prune=true \
+  --ignore="^/\.claude" \
   --asar \
   --asar-unpack="**/*.node" \
   --out="${OUT_DIR}" \

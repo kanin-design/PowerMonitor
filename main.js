@@ -103,13 +103,15 @@ function queryEntries(minutesBack = 43200) {
     // returns 30 days of data instead of an arbitrary row count.
     const cutoff = Math.floor(Date.now() / 1000) - minutesBack * 60;
     const rows = db.prepare(`
-      SELECT ts, battery, charging, amperage, voltage,
+      SELECT ts, ts_unix, battery, charging, amperage, voltage,
              time_remaining_mins, processdetails
       FROM power_log
       WHERE ts_unix >= ?
-      ORDER BY ts DESC
+      ORDER BY ts_unix DESC
       LIMIT 50000
     `).all(cutoff);
+
+    const pad = n => String(n).padStart(2, '0');
 
     return rows.map(row => {
       let pd = {};
@@ -135,8 +137,16 @@ function queryEntries(minutesBack = 43200) {
         ? `${Math.floor(mins / 60)}:${String(mins % 60).padStart(2, '0')}`
         : null;
 
+      // Derive ts from ts_unix as a LOCAL-time string. Stored ts strings are
+      // unreliable (legacy loggers wrote local time, current logger writes
+      // UTC); the renderer parses ts with new Date() which assumes local.
+      const d = new Date(row.ts_unix * 1000);
+      const tsLocal = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ` +
+                      `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+
       return {
-        ts:        row.ts,
+        ts:        tsLocal,
+        ts_unix:   row.ts_unix,
         battery:   row.battery,
         charging:  !!row.charging,
         amperage,
@@ -321,9 +331,16 @@ function getLiveData() {
     const connected = /"ExternalConnected"\s*=\s*Yes/.test(io);
     const charging  = connected && /"IsCharging"\s*=\s*Yes/.test(io);
 
-    // Amperage (stored unsigned 64-bit in ioreg — convert to signed)
-    let amperage = num('Amperage');
-    if (amperage !== null && amperage > 9223372036854775807) amperage = amperage - 18446744073709551616;
+    // Amperage (printed as unsigned 64-bit in ioreg). Convert to signed in
+    // BigInt — doubles can't represent 2^64-range values and quantize the
+    // result to multiples of 2048 (e.g. -578 mA reads as 0).
+    let amperage = null;
+    const am = io.match(/"Amperage"\s*=\s*(-?\d+)/);
+    if (am) {
+      let v = BigInt(am[1]);
+      if (v > 9223372036854775807n) v -= 18446744073709551616n;
+      amperage = Number(v);
+    }
 
     const voltage     = num('Voltage');           // mV
     // 65535 (0xFFFF) is the "calculating, not ready" sentinel — ignore it
@@ -372,11 +389,18 @@ let lastEntryTs  = null;
 let sysInfo      = null;
 let dbTimer      = null;
 
-function scheduleNextDbQuery(lastTs) {
+function scheduleNextDbQuery(lastTsUnix) {
   clearTimeout(dbTimer);
-  // Logger runs every 60s. Fire 1.5s after we expect the next entry.
-  const nextExpected = lastTs ? +new Date(lastTs) + 61500 : Date.now();
-  const delay = Math.max(1000, nextExpected - Date.now());
+  // Logger writes every 60s; ts_unix is UTC epoch seconds, so no string
+  // parsing and no timezone traps. Fire 1s after the next entry is due.
+  let delay;
+  if (!lastTsUnix) {
+    delay = 5000;                       // empty DB — check again soon
+  } else {
+    delay = (lastTsUnix + 61) * 1000 - Date.now();
+    if (delay < 0)      delay = delay > -120000 ? 5000 : 60000;  // overdue: brief retries, then 1/min
+    else if (delay > 65000) delay = 65000;                        // clock skew guard
+  }
   dbTimer = setTimeout(queryAndSend, delay);
 }
 
@@ -385,7 +409,7 @@ function queryAndSend() {
   const entries = queryEntries(settings.timeRange || 43200);
   if (!entries.length) { scheduleNextDbQuery(null); return; }
   const latest = entries[entries.length - 1];
-  scheduleNextDbQuery(latest.ts);      // schedule next check before early-exit
+  scheduleNextDbQuery(latest.ts_unix); // schedule next check before early-exit
   if (latest.ts === lastEntryTs) return;
   lastEntryTs = latest.ts;
   if (mainWindow && !mainWindow.isDestroyed()) {
