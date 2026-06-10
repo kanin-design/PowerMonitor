@@ -1,7 +1,7 @@
 {
   "name": "powermonitor",
   "productName": "PowerMonitor",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "description": "macOS power and battery monitor",
   "author": "Delfinsoft",
   "copyright": "Copyright © 2026 Delfinsoft",
@@ -14,7 +14,8 @@
   "devDependencies": {
     "@electron/packager": "^18.3.0",
     "@electron/rebuild": "^4.0.3",
-    "electron": "^33.0.0"
+    "electron": "^33.0.0",
+    "playwright-core": "^1.60.0"
   },
   "dependencies": {
     "better-sqlite3": "^12.8.0"
