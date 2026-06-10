@@ -141,6 +141,9 @@ function desaturate(hex, amount) {
 const IGNORE_ASSERT = [
   'powerd', 'useractive', 'iohideventsystem', 'delaydisplayoff',
   'applehibtransport', 'com.apple.powermanagement',
+  // WindowServer holds a display assertion whenever the user is active —
+  // always true, never actionable, so it only dilutes the real entries.
+  'windowserver',
 ];
 function interestingAssertions(list) {
   return [...new Set(list.filter(a => !IGNORE_ASSERT.some(s => a.toLowerCase().includes(s))))];
@@ -153,6 +156,13 @@ function applyTheme(isDark) {
 
 if (window.api && window.api.onThemeChanged) {
   window.api.onThemeChanged(({ isDark }) => { applyTheme(isDark); render(); });
+}
+
+if (window.api && window.api.onAccentColor) {
+  window.api.onAccentColor(hex => {
+    if (typeof hex === 'string' && hex.length >= 6)
+      document.documentElement.style.setProperty('--color-accent', '#' + hex.slice(0, 6));
+  });
 }
 
 if (window.api && window.api.onSettings) {
@@ -430,6 +440,15 @@ function lttb(pts, maxPts = 200) {
 }
 
 /* ── Chart: Battery ──────────────────────────────────────────────────────────*/
+// Two renderings, chosen by visible span:
+//  ≤75 min — discrete bars on a 0–100% axis. At short windows battery % is
+//    integer-quantized and nearly constant, so there is no trend to draw; the
+//    bars function as visible sample points (hover targets) and encode charge
+//    state (bright = charging, dim = discharging). Bars must start at 0 — a
+//    length encoding can't use a zoomed floor without lying.
+//  >75 min — area line with an adaptive floor, where the trend IS the story.
+const BATT_BAR_SPAN_MS = 75 * 60e3;
+
 function drawBattery(entries) {
   const windowed = applyWindow(entries);
   if (windowed.length < 2) { document.getElementById('batt-empty').classList.remove('hidden'); return; }
@@ -445,21 +464,31 @@ function drawBattery(entries) {
   const t1   = +new Date(windowed[windowed.length - 1].ts);
   const span = t1 - t0 || 1;
 
-  // Group consecutive samples so bars are ~5px wide.
+  if (span <= BATT_BAR_SPAN_MS) {
+    drawBatteryBars(ctx, windowed, { w, h, pT, pR, pB, pL, ch, cw, t0, t1 });
+  } else {
+    drawBatteryLine(ctx, windowed, { w, h, pT, pR, pB, pL, ch, cw, t0, t1, span });
+  }
+}
+
+function drawBatteryBars(ctx, windowed, g) {
+  const { w, h, pT, pL, ch, cw, t0, t1 } = g;
+
+  // Group consecutive samples so bars are ≥5px wide.
   // All bars are exactly equal width (cw / numBars) — no last-bar remainder.
-  const TARGET_PX    = 5;
-  const maxBars      = Math.max(1, Math.floor(cw / TARGET_PX));
+  const TARGET_PX     = 5;
+  const maxBars       = Math.max(1, Math.floor(cw / TARGET_PX));
   const samplesPerBar = Math.max(1, Math.ceil(windowed.length / maxBars));
-  const numBars      = Math.ceil(windowed.length / samplesPerBar);
-  const barW         = cw / numBars;
-  const GAP          = Math.min(1, barW * 0.12);
+  const numBars       = Math.ceil(windowed.length / samplesPerBar);
+  const barW          = cw / numBars;
+  const GAP           = Math.min(1, barW * 0.12);
 
   const bars = [];
   for (let i = 0; i < windowed.length; i += samplesPerBar) {
     const slice    = windowed.slice(i, i + samplesPerBar);
     const avgBatt  = slice.reduce((a, b) => a + b.battery, 0) / slice.length;
     const charging = slice.filter(e => e.charging).length > slice.length / 2;
-    bars.push({ battery: Math.round(avgBatt), charging, ts: slice[Math.floor(slice.length / 2)].ts });
+    bars.push({ battery: Math.round(avgBatt), charging });
   }
 
   drawGrid(ctx, w, h, PAD, 4);
@@ -473,6 +502,11 @@ function drawBattery(entries) {
   const yOf    = v => pT + ch * (1 - v / 100);
   const bottom = pT + ch;
 
+  // Hovered bar index from the crosshair fraction. The lit column replaces the
+  // dashed crosshair in bar mode — it marks the sample more precisely.
+  const hovered = hoverX.batt === null ? -1
+    : Math.max(0, Math.min(bars.length - 1, Math.floor(hoverX.batt * bars.length)));
+
   for (let i = 0; i < bars.length; i++) {
     const x  = pL + i * barW + GAP / 2;
     const bw = barW - GAP;
@@ -480,8 +514,21 @@ function drawBattery(entries) {
     const r  = Math.min(3, bw / 2);
     ctx.beginPath();
     ctx.roundRect(x, y, bw, bottom - y, [r, r, 0, 0]);
-    ctx.fillStyle = bars[i].charging ? 'rgba(50,215,75,0.85)' : 'rgba(50,215,75,0.45)';
-    ctx.fill();
+    if (i === hovered) {
+      ctx.fillStyle = bars[i].charging ? 'rgba(50,215,75,1)' : 'rgba(50,215,75,0.75)';
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(255,255,255,0.55)';
+      ctx.lineWidth = 1;
+      ctx.stroke();
+    } else if (hovered !== -1) {
+      // Dim the rest a notch — the figure/ground shift is what makes the
+      // selection readable against 60 equally bright columns.
+      ctx.fillStyle = bars[i].charging ? 'rgba(50,215,75,0.55)' : 'rgba(50,215,75,0.30)';
+      ctx.fill();
+    } else {
+      ctx.fillStyle = bars[i].charging ? 'rgba(50,215,75,0.85)' : 'rgba(50,215,75,0.45)';
+      ctx.fill();
+    }
   }
 
   // End dot centred on last bar
@@ -489,15 +536,85 @@ function drawBattery(entries) {
   const dotX = pL + (bars.length - 0.5) * barW;
   ctx.beginPath();
   ctx.arc(dotX, yOf(last.battery), 4, 0, Math.PI * 2);
-  ctx.fillStyle = '#32D74B'; ctx.fill();
+  ctx.fillStyle = getVar('--color-green'); ctx.fill();
   ctx.strokeStyle = 'rgba(255,255,255,0.6)'; ctx.lineWidth = 1.5; ctx.stroke();
 
   drawXAxis(ctx, xTicks(t0, t1), pL, pT, cw, ch, h);
-  drawCrosshair(ctx, hoverX.batt, pL, pT, cw, ch);
 
   const vals = bars.map(b => b.battery);
   document.getElementById('batt-range').textContent =
     `H: ${Math.max(...vals)}%  L: ${Math.min(...vals)}%`;
+}
+
+function drawBatteryLine(ctx, windowed, g) {
+  const { w, h, pT, pL, ch, cw, t0, t1, span } = g;
+
+  // Bucket-average consecutive samples to ~2px per point — enough for a smooth
+  // line at any window size without rendering thousands of segments.
+  const maxPts = Math.max(2, Math.floor(cw / 2));
+  const perPt  = Math.max(1, Math.ceil(windowed.length / maxPts));
+  const pts = [];
+  for (let i = 0; i < windowed.length; i += perPt) {
+    const slice = windowed.slice(i, i + perPt);
+    const avg   = slice.reduce((a, b) => a + b.battery, 0) / slice.length;
+    pts.push({ battery: avg, ts: +new Date(slice[Math.floor(slice.length / 2)].ts) });
+  }
+
+  // Adaptive floor: zoom the axis to the data so variation is visible, but
+  // never tighter than a 20% span — small dips must not look like cliffs.
+  // Steps stay clean (5/10/20/25) and the floor never goes below 0.
+  const vals = pts.map(p => p.battery);
+  const minV = Math.min(...vals);
+  const dataSpan = 100 - Math.max(0, minV - 5);
+  const step = dataSpan <= 20 ? 5 : dataSpan <= 40 ? 10 : dataSpan <= 80 ? 20 : 25;
+  const yMin = Math.max(0, 100 - 4 * step);
+  const yRange = 100 - yMin;
+
+  drawGrid(ctx, w, h, PAD, 4);
+
+  axisStyle(ctx);
+  ctx.textAlign = 'right';
+  for (let i = 0; i <= 4; i++) {
+    ctx.fillText(round(100 - step * i) + '%', pL - 8, pT + ch*(i/4) + 3.5);
+  }
+
+  const xOf = p => pL + cw * ((p.ts - t0) / span);
+  const yOf = v => pT + ch * (1 - (v - yMin) / yRange);
+
+  drawXAxis(ctx, xTicks(t0, t1), pL, pT, cw, ch, h);
+
+  const xy = pts.map(p => [xOf(p), yOf(p.battery)]);
+
+  // Area fill: green fading to transparent toward the chart floor
+  const grad = ctx.createLinearGradient(0, pT, 0, pT + ch);
+  grad.addColorStop(0, 'rgba(50,215,75,0.28)');
+  grad.addColorStop(1, 'rgba(50,215,75,0.02)');
+  ctx.beginPath();
+  ctx.moveTo(xy[0][0], pT + ch);
+  ctx.lineTo(xy[0][0], xy[0][1]);
+  smoothPath(ctx, xy);
+  ctx.lineTo(xy[xy.length-1][0], pT + ch);
+  ctx.closePath();
+  ctx.fillStyle = grad; ctx.fill();
+
+  // Level line
+  ctx.beginPath();
+  ctx.moveTo(xy[0][0], xy[0][1]);
+  smoothPath(ctx, xy);
+  ctx.strokeStyle = getVar('--color-green'); ctx.lineWidth = 2.5;
+  ctx.lineJoin = 'round'; ctx.lineCap = 'round'; ctx.stroke();
+
+  // End dot at current level
+  const lastXY = xy[xy.length - 1];
+  ctx.beginPath();
+  ctx.arc(lastXY[0], lastXY[1], 4, 0, Math.PI * 2);
+  ctx.fillStyle = getVar('--color-green'); ctx.fill();
+  ctx.strokeStyle = 'rgba(255,255,255,0.6)'; ctx.lineWidth = 1.5; ctx.stroke();
+
+  drawCrosshair(ctx, hoverX.batt, pL, pT, cw, ch);
+
+  document.getElementById('batt-range').textContent =
+    `H: ${Math.round(Math.max(...vals))}%  L: ${Math.round(minV)}%`;
 }
 
 /* ── Chart: Power Draw ───────────────────────────────────────────────────────*/
@@ -579,8 +696,8 @@ function drawWatts(entries) {
     ctx.lineJoin = 'round'; ctx.lineCap = 'round'; ctx.stroke();
     ctx.restore();
   };
-  drawLine('#32D74B', pT,    yZero - pT);
-  drawLine('#FF9F0A', yZero, pT + ch - yZero);
+  drawLine(getVar('--color-green'),  pT,    yZero - pT);
+  drawLine(getVar('--color-orange'), yZero, pT + ch - yZero);
 
   // Summary reflects power DRAW only — discharge samples, ignoring charging/plugged-in.
   const draw = allW.filter(x => x < 0).map(x => -x);
@@ -616,8 +733,9 @@ function drawCpuSmooth(entries) {
   }));
   const procs = Object.keys(tot).sort((a,b) => tot[b]-tot[a]).slice(0, 10);
 
-  // Clear stale hover if that process isn't in the current window
-  if (hoveredProcess && !procs.includes(hoveredProcess)) hoveredProcess = null;
+  // NOTE: do not reset hoveredProcess when it's absent from the chart's top set
+  // (sidebar lists the latest sample's top 8; the chart ranks the whole window).
+  // Absent hover → every band dims, honestly signalling "not in this chart".
 
   // Downsample for smooth rendering
   const V = lttb(windowed, 200);
@@ -764,7 +882,7 @@ function drawCpuBlocks(entries) {
   if (!allProcs.length) { document.getElementById('cpu-empty').classList.remove('hidden'); return; }
   document.getElementById('cpu-empty').classList.add('hidden');
 
-  if (hoveredProcess && !allProcs.includes(hoveredProcess)) hoveredProcess = null;
+  // Absent hover → all segments dim (see note in drawCpuSmooth) — never reset here.
 
   // Classify — preserve size-sort order within each group
   const lastWithUsers = [...windowed].reverse().find(e => e.procUsers && Object.keys(e.procUsers).length);
@@ -947,6 +1065,10 @@ function renderSidebar() {
   const live = state.latest;
   if (!live) return;
 
+  // First real data: swap text skeletons for values
+  for (const id of ['sb-batt-num', 'sb-timeleft', 'sb-watts'])
+    document.getElementById(id).classList.remove('skeleton-text');
+
   // Battery %
   if (live.battery != null)
     document.getElementById('sb-batt-num').textContent = live.battery + '%';
@@ -1016,7 +1138,7 @@ function renderSidebar() {
     renderAssertions(l.assertions);
   }
 
-  renderMemBar(live.memFree);
+  renderMemBar(live.mem);
 }
 
 // Parse a memory string ("16 GB", "1.2 GB", "512 MB") to GB float
@@ -1029,19 +1151,18 @@ function parseMemGB(str) {
   return u === 'TB' ? n * 1024 : u === 'MB' ? n / 1024 : u === 'KB' ? n / 1048576 : n;
 }
 
-function renderMemBar(memFreeStr) {
+function renderMemBar(mem) {
   const el = document.getElementById('sb-mem-free');
   if (!el) return;
   const si = state.sysInfo;
   const totalGB = si && parseMemGB(si.memory);
-  const freeGB  = parseMemGB(memFreeStr);
-  if (!totalGB || freeGB == null) {
-    el.innerHTML = memFreeStr
-      ? `<span class="mem-bar-sub">${h(memFreeStr)} free</span>` : '';
-    return;
-  }
-  const usedGB  = Math.max(0, totalGB - freeGB);
+  if (!totalGB || !mem || mem.usedMB == null) { el.innerHTML = ''; return; }
+  const usedGB = Math.min(totalGB, mem.usedMB / 1024);
+  const freeGB = Math.max(0, totalGB - usedGB);
   const pct = Math.round(Math.max(0, Math.min(1, usedGB / totalGB)) * 100);
+  // Color tracks kernel memory PRESSURE, not capacity — macOS keeps RAM full
+  // by design, so a high used% alone is not a warning sign.
+  const sev = mem.pressure >= 4 ? ' crit' : mem.pressure >= 2 ? ' warn' : '';
   el.innerHTML =
     `<div class="mem-card">
        <div class="mem-card-top">
@@ -1049,7 +1170,7 @@ function renderMemBar(memFreeStr) {
          <span class="mem-card-value">${pct}<span class="mem-card-unit">%</span></span>
        </div>
        <div class="mem-bar-track">
-         <div class="mem-bar-fill" style="width:${pct}%"></div>
+         <div class="mem-bar-fill${sev}" style="width:${pct}%"></div>
        </div>
        <div class="mem-card-foot">
          <span>${usedGB.toFixed(1)} GB used</span>
@@ -1064,18 +1185,28 @@ function formatMem(kb) {
   return kb + 'KB';
 }
 
+let lastProcListKey = '';
+
 function renderProcessList(cpus, mem = {}, procUsers = {}) {
   const sorted = Object.entries(cpus).sort((a,b) => b[1]-a[1]).slice(0, 8);
 
   if (!sorted.length) {
     document.getElementById('proc-list').innerHTML =
       '<div style="font-size:12px;color:var(--text-tertiary);padding:8px 0">Idle</div>';
+    lastProcListKey = '';
     return;
   }
 
   // Match the CPU chart's colour scheme: system processes get grey shades by rank,
   // user processes get palette colours — so a sidebar dot maps to its chart band.
   const isDark   = document.documentElement.getAttribute('data-theme') !== 'light';
+
+  // The 1s live loop calls this with data that only changes ~once a minute.
+  // Rebuilding innerHTML under a stationary cursor drops the :hover state until
+  // the next mousemove — visible as a 1 Hz blink. Skip when nothing changed.
+  const key = isDark + '|' + sorted.map(([n, c]) => n + ':' + c.toFixed(1) + ':' + (mem[n] || '')).join('|');
+  if (key === lastProcListKey) return;
+  lastProcListKey = key;
   const sysNames = sorted.map(([n]) => n).filter(n => isSystemProcess(n, procUsers[n]));
   const colorFor = name => {
     const r = sysNames.indexOf(name);
@@ -1087,7 +1218,7 @@ function renderProcessList(cpus, mem = {}, procUsers = {}) {
     const rss = mem[name];
 
     const memStr = rss ? formatMem(rss) : '';
-    return `<div class="process-item">
+    return `<div class="process-item" data-name="${h(name)}">
       <span class="process-dot" style="background:${h(c)}"></span>
       <span class="process-name">${h(name)}</span>
       <span class="process-stat">
@@ -1097,6 +1228,24 @@ function renderProcessList(cpus, mem = {}, procUsers = {}) {
     </div>`;
   }).join('');
 }
+
+// Right-click a process row → native context menu (full name + copy)
+document.getElementById('proc-list').addEventListener('contextmenu', e => {
+  const item = e.target.closest('.process-item');
+  if (!item || !item.dataset.name) return;
+  e.preventDefault();
+  if (window.api && window.api.showProcessMenu) window.api.showProcessMenu(item.dataset.name);
+});
+
+// Hovering a sidebar process row highlights its band in the CPU chart —
+// same mechanism as legend hover, so the dot→band color mapping pays off.
+document.getElementById('proc-list').addEventListener('mouseover', e => {
+  const name = e.target.closest('.process-item')?.dataset.name || null;
+  if (name !== hoveredProcess) { hoveredProcess = name; drawCpu(state.entries); }
+});
+document.getElementById('proc-list').addEventListener('mouseleave', () => {
+  if (hoveredProcess !== null) { hoveredProcess = null; drawCpu(state.entries); }
+});
 
 function renderAssertions(assertions) {
   const filtered = interestingAssertions(assertions);
@@ -1141,7 +1290,7 @@ if (window.api && window.api.onLogUpdate) {
       state.latest = {
         battery:  l.battery,  charging: l.charging,
         amperage: l.amperage, voltage:  l.voltage,
-        timeLeft: l.timeLeft, adapter:  null, memFree: null,
+        timeLeft: l.timeLeft, adapter:  null, mem: null,
       };
       renderSidebar();
     }
@@ -1302,7 +1451,7 @@ window.addEventListener('resize', () => { clearTimeout(resizeTimer); resizeTimer
 setupHover();
 
 /* ── Model-name hover panel ──────────────────────────────────────────────────*/
-function buildSiPanel(si, memFree) {
+function buildSiPanel(si, mem) {
   if (!si) return '<div class="si-loading">Loading…</div>';
 
   const row = (label, value, cls = '') =>
@@ -1327,8 +1476,12 @@ function buildSiPanel(si, memFree) {
 
   // RAM line: total always shown, free appended when available
   // Note: ramVal is inserted via a dedicated path below (not through row()) to allow the inner span
-  const ramVal = memFree
-    ? `${h(si.memory)} <span class="si-dim">· ${h(memFree)} free</span>`
+  const siTotalGB = parseMemGB(si.memory);
+  const freeStr = (mem && mem.usedMB != null && siTotalGB)
+    ? Math.max(0, siTotalGB - mem.usedMB / 1024).toFixed(1) + ' GB'
+    : null;
+  const ramVal = freeStr
+    ? `${h(si.memory)} <span class="si-dim">· ${h(freeStr)} free</span>`
     : h(si.memory || '?');
 
   // RAM row is built separately so we can embed a safe inner <span> for the "free" label
@@ -1387,9 +1540,9 @@ function positionSiPanel(trigger, panel) {
   if (!trigger || !panel) return;
 
   trigger.addEventListener('mouseenter', () => {
-    // Use live memFree from the 1s IORegistry loop
-    const memFree = state.latest && state.latest.memFree;
-    panel.innerHTML = buildSiPanel(state.sysInfo, memFree);
+    // Use live memory stats from the 1s IORegistry loop
+    const mem = state.latest && state.latest.mem;
+    panel.innerHTML = buildSiPanel(state.sysInfo, mem);
     panel.style.display = 'block';
     positionSiPanel(trigger, panel);
   });
@@ -1502,6 +1655,16 @@ function positionSiPanel(trigger, panel) {
     });
 
     card.addEventListener('mousedown', e => { mdX = e.clientX; mdY = e.clientY; });
+  });
+
+  // Esc collapses the expanded chart — native overlay behavior
+  document.addEventListener('keydown', e => {
+    if (e.key !== 'Escape' || !state.expandedChart) return;
+    state.expandedChart = null;
+    doCollapse();
+  });
+
+  cards.forEach(card => {
     card.addEventListener('click', e => {
       if (e.target.closest('.legend-item')) return;
       if (Math.abs(e.clientX - mdX) > 5 || Math.abs(e.clientY - mdY) > 5) return;

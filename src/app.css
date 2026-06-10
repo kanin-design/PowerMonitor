@@ -5,10 +5,13 @@
   --bg-tertiary:   #1E1E1E;
   --bg-quaternary: #262626;
 
-  --text-primary:    #E8E8E8;
-  --text-secondary:  rgba(232,232,232,0.80);
-  --text-tertiary:   rgba(232,232,232,0.45);
-  --text-quaternary: rgba(232,232,232,0.20);
+  /* Apple semantic label ramp (dark). Tertiary maps to Apple's secondaryLabel
+     (0.55) — the dimmest tier that still passes AA at caption sizes.
+     Quaternary is for decoration/disabled only, never body content. */
+  --text-primary:    rgba(255,255,255,0.85);
+  --text-secondary:  rgba(255,255,255,0.68);
+  --text-tertiary:   rgba(255,255,255,0.55);
+  --text-quaternary: rgba(255,255,255,0.25);
 
   --color-green:      #32D74B;
   --color-green-dim:  rgba(50,215,75,0.12);
@@ -21,6 +24,9 @@
   --color-yellow:     #FFD60A;
   --color-pink:       #FF375F;
   --color-brown:      #A2845E;
+
+  /* macOS accent — overridden at runtime with the user's system accent color */
+  --color-accent:     var(--color-blue);
 
   --border-subtle:   rgba(255,255,255,0.04);
   --border-standard: rgba(255,255,255,0.08);
@@ -46,10 +52,23 @@
   --bg-tertiary:   #F2F2F7;
   --bg-quaternary: #E5E5EA;
 
-  --text-primary:    #000000;
-  --text-secondary:  rgba(0,0,0,0.75);
+  /* Apple semantic label ramp (light) */
+  --text-primary:    rgba(0,0,0,0.85);
+  --text-secondary:  rgba(0,0,0,0.68);
   --text-tertiary:   rgba(0,0,0,0.50);
-  --text-quaternary: rgba(0,0,0,0.25);
+  --text-quaternary: rgba(0,0,0,0.26);
+
+  /* Apple system colors, light appearance */
+  --color-green:      #34C759;
+  --color-green-dim:  rgba(52,199,89,0.12);
+  --color-orange:     #FF9500;
+  --color-orange-dim: rgba(255,149,0,0.12);
+  --color-red:        #FF3B30;
+  --color-blue:       #007AFF;
+  --color-purple:     #AF52DE;
+  --color-teal:       #30B0C7;
+  --color-yellow:     #FFCC00;
+  --color-pink:       #FF2D55;
 
   --border-subtle:   rgba(0,0,0,0.05);
   --border-standard: rgba(0,0,0,0.08);
@@ -147,7 +166,6 @@ html, body {
   line-height: 1;
   color: var(--text-primary);
   font-variant-numeric: tabular-nums;
-  text-shadow: 0 1px 8px rgba(0,0,0,0.4);
 }
 
 .battery-state {
@@ -157,7 +175,6 @@ html, body {
   font-size: 12px;
   color: var(--text-tertiary);
   transition: color 0.2s ease;
-  text-shadow: 0 1px 4px rgba(0,0,0,0.4);
 }
 
 .state-dot {
@@ -207,7 +224,6 @@ html, body {
   letter-spacing: -0.02em;
   color: var(--text-primary);
   transition: color 0.2s ease;
-  text-shadow: 0 1px 6px rgba(0,0,0,0.4);
 }
 
 .status-sub-label {
@@ -238,6 +254,9 @@ html, body {
   gap: 2px;
   overflow-y: auto;
   flex: 1;
+  /* Never collapse below ~4 rows at small window heights — the sidebar
+     scrolls instead. Without this, flex squeezes the list to 0 at minHeight. */
+  min-height: 116px;
 }
 
 .process-item {
@@ -261,7 +280,7 @@ html, body {
 
 .process-name {
   flex: 1;
-  font-size: 12px;
+  font-size: 13px;
   color: var(--text-secondary);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -316,16 +335,36 @@ html, body {
   100% { background-position:  200% 0; }
 }
 
-/* ── Assertions ──────────────────────────────────────────────────────────────*/
+/* Text-shaped skeleton: same shimmer, applied to value elements pre-data */
+.skeleton-text {
+  color: transparent !important;
+  background: linear-gradient(90deg, var(--bg-tertiary) 0%, var(--bg-quaternary) 50%, var(--bg-tertiary) 100%);
+  background-size: 200% 100%;
+  animation: shimmer 1.5s infinite;
+  border-radius: 8px;
+}
+
+/* ── Assertions (card treatment — this explains drain, give it weight) ──────*/
 .assertions-list {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 4px;
+  padding: 10px 14px;
+  background: rgba(0, 0, 0, 0.20);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border-radius: 10px;
+  border: 1px solid rgba(255,255,255,0.07);
+}
+
+[data-theme="light"] .assertions-list {
+  background: rgba(0, 0, 0, 0.06);
+  border-color: rgba(0,0,0,0.08);
 }
 
 .assertion-pill {
-  font-size: 11px;
-  color: rgba(255, 159, 10, 0.65);
+  font-size: 12px;
+  color: var(--color-orange);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -333,8 +372,8 @@ html, body {
 }
 
 .assertion-empty {
-  font-size: 11px;
-  color: var(--text-quaternary);
+  font-size: 12px;
+  color: var(--text-tertiary);
 }
 
 /* ════════════════════════════════════════════════════════════════════════════
@@ -532,6 +571,18 @@ html, body {
   font-weight: 400;
   min-height: 16px;
 }
+
+/* Expand affordance: glyph fades in left of the meta text on card hover */
+.chart-meta::before {
+  content: '⤢';
+  display: inline-block;
+  margin-right: 8px;
+  opacity: 0;
+  color: var(--text-tertiary);
+  transition: opacity 0.15s ease;
+}
+.chart-card:hover .chart-meta::before { opacity: 1; }
+.chart-card.expanded .chart-meta::before { content: '✕'; opacity: 0.8; }
 
 .chart-body {
   position: relative;
@@ -818,7 +869,6 @@ html, body {
   line-height: 1;
   letter-spacing: -0.02em;
   font-variant-numeric: tabular-nums;
-  text-shadow: 0 1px 6px rgba(0,0,0,0.4);
 }
 
 .mem-card-unit {
@@ -845,8 +895,11 @@ html, body {
   height: 100%;
   border-radius: 5px 0 0 5px;
   background: var(--text-tertiary);
-  transition: width 0.4s ease;
+  transition: width 0.4s ease, background-color 0.4s ease;
 }
+
+.mem-bar-fill.warn { background: var(--color-orange); }
+.mem-bar-fill.crit { background: var(--color-red); }
 
 .mem-card-foot {
   display: flex;
@@ -858,7 +911,21 @@ html, body {
 
 /* ── Focus ───────────────────────────────────────────────────────────────────*/
 button:focus-visible, [tabindex]:focus-visible {
-  outline: none;
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+
+/* ── Reduced transparency (Accessibility ▸ Display) ──────────────────────────*/
+@media (prefers-reduced-transparency: reduce) {
+  .sidebar {
+    background: var(--bg-primary);
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
+  .status-block, .mem-card, .assertions-list, .sysinfo-panel, .tooltip, .si-panel {
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
 }
 
 /* ── Reduced motion ──────────────────────────────────────────────────────────*/

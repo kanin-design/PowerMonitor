@@ -1,4 +1,4 @@
-const { app, BrowserWindow, nativeTheme, Menu, ipcMain, powerMonitor } = require("electron");
+const { app, BrowserWindow, nativeTheme, Menu, ipcMain, powerMonitor, systemPreferences, clipboard } = require("electron");
 const Database = require("better-sqlite3");
 const { join } = require("path");
 const { homedir } = require("os");
@@ -165,6 +165,25 @@ function queryEntries(minutesBack = 43200) {
 }
 
 /* ── App menu ────────────────────────────────────────────────────────────── */
+function sendSettings() {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  try {
+    mainWindow.webContents.send('settings', {
+      isDark:    nativeTheme.shouldUseDarkColors,
+      timeRange: settings.timeRange,
+      cpuView:   settings.cpuView || 'blocks',
+    });
+  } catch {}
+}
+
+const MENU_RANGES = [
+  { label: '10 Minutes', min: 10 },
+  { label: '1 Hour',     min: 60 },
+  { label: '6 Hours',    min: 360 },
+  { label: '24 Hours',   min: 1440 },
+  { label: '30 Days',    min: 43200 },
+];
+
 function buildMenu() {
   const setTheme = (mode) => {
     settings.theme = mode;
@@ -175,18 +194,19 @@ function buildMenu() {
     settings.cpuView = mode;
     saveSettings();
     buildMenu();
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      try {
-        mainWindow.webContents.send('settings', {
-          isDark:    nativeTheme.shouldUseDarkColors,
-          timeRange: settings.timeRange,
-          cpuView:   mode,
-        });
-      } catch {}
-    }
+    sendSettings();
+  };
+  const setRange = (min) => {
+    settings.timeRange = min;
+    saveSettings();
+    lastEntryTs = null;   // force re-fetch with new time window
+    clearTimeout(dbTimer);
+    queryAndSend();
+    sendSettings();
   };
   const t = settings.theme;
   const cv = settings.cpuView || 'blocks';
+  const tr = settings.timeRange || 43200;
   const template = [
     {
       label: 'PowerMonitor',
@@ -205,6 +225,17 @@ function buildMenu() {
     {
       label: 'View',
       submenu: [
+        {
+          label: 'Time Range',
+          submenu: MENU_RANGES.map((r, i) => ({
+            label: r.label,
+            type: 'radio',
+            accelerator: `Cmd+${i + 1}`,
+            checked: tr === r.min,
+            click: () => setRange(r.min),
+          })),
+        },
+        { type: 'separator' },
         {
           label: 'Theme',
           submenu: [
@@ -320,7 +351,7 @@ function getSystemInfo() {
 }
 
 /* ── Live data (1s) — IORegistry + vm_stat, never touches the DB ─────────── */
-let memFreeCache = { val: null, at: 0 };
+let memCache = { val: null, at: 0 };
 
 function getLiveData() {
   try {
@@ -365,17 +396,30 @@ function getLiveData() {
       if (watts) { adapter = { watts, voltage: voltage_mv ? Math.round(voltage_mv / 1000) : null, desc }; break; }
     }
 
-    // Free + inactive memory pages → GB/MB string. Cached 5s — memory drifts
-    // slowly and this halves the subprocess cost of the 1s loop.
-    let memFree = memFreeCache.val;
-    if (Date.now() - memFreeCache.at > 5000) {
+    // Memory used (Activity Monitor formula) + kernel pressure level. Cached 5s —
+    // memory drifts slowly and this halves the subprocess cost of the 1s loop.
+    let mem = memCache.val;
+    if (Date.now() - memCache.at > 5000) {
       try {
         const vm = execSync('vm_stat 2>/dev/null', { timeout: 1000 }).toString();
-        const free     = parseInt(vm.match(/Pages free:\s+(\d+)/)?.[1]     || 0);
-        const inactive = parseInt(vm.match(/Pages inactive:\s+(\d+)/)?.[1] || 0);
-        const mb = Math.round((free + inactive) * 4096 / 1048576);
-        memFree = mb >= 1024 ? (mb / 1024).toFixed(1) + ' GB' : mb + ' MB';
-        memFreeCache = { val: memFree, at: Date.now() };
+        // Page size is 16384 on Apple Silicon, 4096 on Intel — never hardcode it
+        const pageSize = parseInt(vm.match(/page size of (\d+)/)?.[1] || 4096);
+        const pg = name => parseInt(vm.match(new RegExp(name + ':\\s+(\\d+)'))?.[1] || 0);
+        // Activity Monitor's "Memory Used" = App Memory (anonymous − purgeable)
+        // + wired + compressed. "Free + inactive" is NOT it: macOS keeps RAM
+        // deliberately full of reclaimable cache, so that reads ~90% on a healthy Mac.
+        const usedMB = Math.round(
+          (pg('Pages wired down') + pg('Anonymous pages') - pg('Pages purgeable')
+           + pg('Pages occupied by compressor')) * pageSize / 1048576);
+        // Kernel pressure level — the signal Activity Monitor charts:
+        // 1 normal, 2 warning, 4 critical
+        let pressure = 1;
+        try {
+          pressure = parseInt(execSync('sysctl -n kern.memorystatus_vm_pressure_level',
+            { timeout: 1000 }).toString().trim(), 10) || 1;
+        } catch {}
+        mem = { usedMB, pressure };
+        memCache = { val: mem, at: Date.now() };
       } catch {}
     }
 
@@ -383,7 +427,7 @@ function getLiveData() {
       ? `${Math.floor(timeRemMins / 60)}:${String(timeRemMins % 60).padStart(2, '0')}`
       : null;
 
-    return { battery, charging, connected, amperage, voltage, timeLeft, adapter, memFree };
+    return { battery, charging, connected, amperage, voltage, timeLeft, adapter, mem };
   } catch { return null; }
 }
 
@@ -582,14 +626,29 @@ app.whenReady().then(async () => {
     lastEntryTs = null;   // force re-fetch with new time window
     clearTimeout(dbTimer);
     queryAndSend();
+    buildMenu();          // sync the Time Range radio checkmarks
   });
 
+  // Right-click on a sidebar process row → native context menu
+  ipcMain.on('proc-context', (_, name) => {
+    if (typeof name !== 'string' || !name || name.length > 256) return;
+    Menu.buildFromTemplate([
+      { label: name, enabled: false },
+      { type: 'separator' },
+      { label: 'Copy Name', click: () => clipboard.writeText(name) },
+    ]).popup({ window: mainWindow });
+  });
+
+  // User's macOS accent color → renderer CSS variable, live on change
+  const sendAccent = () => {
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    try { mainWindow.webContents.send('accent-color', systemPreferences.getAccentColor()); } catch {}
+  };
+  systemPreferences.on('accent-color-changed', sendAccent);
+
   mainWindow.webContents.once('did-finish-load', () => {
-    mainWindow.webContents.send('settings', {
-      isDark:    nativeTheme.shouldUseDarkColors,
-      timeRange: settings.timeRange,
-      cpuView:   settings.cpuView || 'blocks',
-    });
+    sendSettings();
+    sendAccent();
     // Reset so queryAndSend always delivers on first real page load,
     // even if focus fired early and set lastEntryTs before the page was ready.
     lastEntryTs = null;
