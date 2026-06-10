@@ -958,7 +958,11 @@ function renderSidebar() {
 
   // State label and dot: driven by connected, not IsCharging
   const stateEl = document.getElementById('sb-state');
-  stateEl.querySelector('.state-text').textContent = connected ? 'Charging' : 'On Battery';
+  // Three states: "Charging" only when current actually flows in — a plugged
+  // Mac that is holding or draining its battery says "Plugged In" instead,
+  // so the header can never contradict the watts label below it.
+  stateEl.querySelector('.state-text').textContent =
+    connected ? (isCharging ? 'Charging' : 'Plugged In') : 'On Battery';
   stateEl.className = 'battery-state ' + (connected ? 'charging' : 'discharging');
 
   // Time left
@@ -982,15 +986,18 @@ function renderSidebar() {
   if (live.amperage != null && live.voltage != null) {
     const watts = (live.amperage * live.voltage) / 1e6;
     wv.textContent = Math.abs(watts).toFixed(1) + 'W';
-    // Gate "charging" (and green) on connected — amperage can briefly read
-    // positive right after unplug, and a disconnected Mac is never charging.
-    const gaining = connected && watts >= 0;
-    wv.style.color = gaining ? 'var(--color-green)' : 'var(--color-orange)';
-    // Sub-label: adapter info when connected (e.g. "charging · 45W @ 9V")
+    // InstantAmperage is noisy around zero (±0.5W even unplugged), so color
+    // and verb use a deadband. Plugged in: green unless the battery is
+    // meaningfully feeding the system; unplugged: never "charging".
     if (connected && live.adapter) {
       const a = live.adapter;
-      wvLabel.textContent = `charging · ${a.watts}W${a.voltage ? ` @ ${a.voltage}V` : ''}`;
+      const draining = watts < -0.5;
+      const verb = isCharging ? 'charging' : draining ? 'draining' : 'plugged';
+      wv.style.color = draining ? 'var(--color-orange)' : 'var(--color-green)';
+      wvLabel.textContent = `${verb} · ${a.watts}W${a.voltage ? ` @ ${a.voltage}V` : ''}`;
     } else {
+      const gaining = connected && watts >= 0;
+      wv.style.color = gaining ? 'var(--color-green)' : 'var(--color-orange)';
       wvLabel.textContent = gaining ? 'charging' : 'discharging';
     }
     wvLabel.style.color = '';

@@ -320,6 +320,8 @@ function getSystemInfo() {
 }
 
 /* ── Live data (1s) — IORegistry + vm_stat, never touches the DB ─────────── */
+let memFreeCache = { val: null, at: 0 };
+
 function getLiveData() {
   try {
     const io = execSync('ioreg -r -c AppleSmartBattery -w0 2>/dev/null', { timeout: 2000 }).toString();
@@ -363,15 +365,19 @@ function getLiveData() {
       if (watts) { adapter = { watts, voltage: voltage_mv ? Math.round(voltage_mv / 1000) : null, desc }; break; }
     }
 
-    // Free + inactive memory pages → GB/MB string
-    let memFree = null;
-    try {
-      const vm = execSync('vm_stat 2>/dev/null', { timeout: 1000 }).toString();
-      const free     = parseInt(vm.match(/Pages free:\s+(\d+)/)?.[1]     || 0);
-      const inactive = parseInt(vm.match(/Pages inactive:\s+(\d+)/)?.[1] || 0);
-      const mb = Math.round((free + inactive) * 4096 / 1048576);
-      memFree = mb >= 1024 ? (mb / 1024).toFixed(1) + ' GB' : mb + ' MB';
-    } catch {}
+    // Free + inactive memory pages → GB/MB string. Cached 5s — memory drifts
+    // slowly and this halves the subprocess cost of the 1s loop.
+    let memFree = memFreeCache.val;
+    if (Date.now() - memFreeCache.at > 5000) {
+      try {
+        const vm = execSync('vm_stat 2>/dev/null', { timeout: 1000 }).toString();
+        const free     = parseInt(vm.match(/Pages free:\s+(\d+)/)?.[1]     || 0);
+        const inactive = parseInt(vm.match(/Pages inactive:\s+(\d+)/)?.[1] || 0);
+        const mb = Math.round((free + inactive) * 4096 / 1048576);
+        memFree = mb >= 1024 ? (mb / 1024).toFixed(1) + ' GB' : mb + ' MB';
+        memFreeCache = { val: memFree, at: Date.now() };
+      } catch {}
+    }
 
     const timeLeft = timeRemMins != null
       ? `${Math.floor(timeRemMins / 60)}:${String(timeRemMins % 60).padStart(2, '0')}`
@@ -609,7 +615,13 @@ app.whenReady().then(async () => {
     // Also re-query DB immediately on focus in case we missed a cycle while hidden
     queryAndSend();
   });
-  mainWindow.on('blur', stopLive);
+  // Keep ticking while visible-but-unfocused — it's a monitor, the user
+  // watches it while working elsewhere. The blur-pause froze the sidebar on
+  // stale charge states. Pause only when the window truly leaves the screen.
+  mainWindow.on('hide',     stopLive);
+  mainWindow.on('minimize', stopLive);
+  mainWindow.on('show',     startLive);
+  mainWindow.on('restore',  () => { startLive(); queryAndSend(); });
 
   // Instant plug/unplug + wake updates — these fire even while the window is
   // blurred and the 1s loop is paused, so the sidebar never shows a stale
