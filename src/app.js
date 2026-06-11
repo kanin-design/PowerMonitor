@@ -166,8 +166,10 @@ if (window.api && window.api.onAccentColor) {
 }
 
 if (window.api && window.api.onSettings) {
-  window.api.onSettings(({ isDark, timeRange, cpuView }) => {
+  window.api.onSettings(({ isDark, timeRange, cpuView, glass }) => {
     applyTheme(isDark);
+    // Liquid Glass active: the OS material replaces our vibrancy-era styling
+    document.documentElement.toggleAttribute('data-glass', !!glass);
     const btn = document.querySelector(`.range-btn[data-min="${timeRange}"]`);
     if (btn) {
       document.querySelectorAll('.range-btn').forEach(b => b.classList.remove('active'));

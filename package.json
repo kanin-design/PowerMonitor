@@ -18,6 +18,7 @@
     "playwright-core": "^1.60.0"
   },
   "dependencies": {
-    "better-sqlite3": "^12.8.0"
+    "better-sqlite3": "^12.8.0",
+    "electron-liquid-glass": "^1.1.1"
   }
 }

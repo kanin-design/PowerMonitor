@@ -7,6 +7,15 @@ const fs = require("fs");
 
 const DB_PATH = join(homedir(), ".local", "powermon.db");
 
+/* ── Liquid Glass (macOS 26+) ────────────────────────────────────────────── */
+// Real NSGlassEffectView via electron-liquid-glass. When available we skip
+// Electron's vibrancy entirely — it would render on top and look frosted.
+let liquidGlass = null;
+try {
+  const lg = require('electron-liquid-glass');
+  if (lg.isGlassSupported()) liquidGlass = lg;
+} catch {}
+
 /* ── Logger / LaunchAgent constants ─────────────────────────────────────── */
 const PLIST_LABEL  = 'com.delfinsoft.powermonitor';
 const PLIST_PATH   = join(homedir(), 'Library', 'LaunchAgents', `${PLIST_LABEL}.plist`);
@@ -172,6 +181,7 @@ function sendSettings() {
       isDark:    nativeTheme.shouldUseDarkColors,
       timeRange: settings.timeRange,
       cpuView:   settings.cpuView || 'blocks',
+      glass:     !!liquidGlass,
     });
   } catch {}
 }
@@ -269,8 +279,6 @@ function createWindow() {
     minHeight: 560,
     titleBarStyle: 'hiddenInset',
     trafficLightPosition: { x: 16, y: 16 },
-    vibrancy: 'under-window',
-    visualEffectState: 'active',
     transparent: true,
     backgroundColor: '#00000000',
     icon: join(__dirname, "icons", "mac", "icon.icns"),
@@ -282,8 +290,25 @@ function createWindow() {
     },
   };
   if (typeof b.x === 'number' && typeof b.y === 'number') { opts.x = b.x; opts.y = b.y; }
+  // Fallback material for macOS < 26 (or if the glass addon failed to load)
+  if (!liquidGlass) { opts.vibrancy = 'under-window'; opts.visualEffectState = 'active'; }
   mainWindow = new BrowserWindow(opts);
   mainWindow.loadFile(join(__dirname, "src", "index.html"));
+
+  if (liquidGlass) {
+    mainWindow.webContents.once('did-finish-load', () => {
+      try {
+        const glassId = liquidGlass.addView(mainWindow.getNativeWindowHandle(), { cornerRadius: 12 });
+        if (glassId !== -1) {
+          // Regular material + scrim: diffused color bleed without legible
+          // backdrop text — closest match to Control Center (compared against
+          // clear/tinted/controlCenter variants on real captures).
+          liquidGlass.setVariant(glassId, liquidGlass.GlassMaterialVariant.regular);
+          liquidGlass.unstable_setScrim(glassId, 1);
+        }
+      } catch (e) { console.error('liquid glass attach failed:', e.message); }
+    });
+  }
 
   let boundsTimer;
   const saveBounds = () => {
