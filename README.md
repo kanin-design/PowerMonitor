@@ -8,6 +8,17 @@ A macOS app for tracking battery health, power draw, and CPU usage over time —
 
 ---
 
+## Liquid Glass (experimental)
+
+This branch adds a real **Liquid Glass** sidebar on macOS 26+ (Tahoe), using
+the native `NSGlassEffectView` material instead of Electron's vibrancy —
+true refraction and light bleed-through from whatever's behind the window,
+switchable via View ▸ Glass Style.
+
+![Liquid Glass sidebar](docs/glass-screenshot.png)
+
+---
+
 ## Features
 
 - **Battery level** — live % with charge/discharge history

@@ -915,6 +915,34 @@ button:focus-visible, [tabindex]:focus-visible {
   outline-offset: 2px;
 }
 
+/* ── Liquid Glass (macOS 26+, real NSGlassEffectView behind the window) ──────*/
+/* The glass material provides its own tint, refraction, and specular rim —
+   our vibrancy-era white film and decorative blur would just fog it up. */
+[data-glass] .sidebar {
+  background: transparent;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+[data-glass][data-theme="light"] .sidebar {
+  background: transparent;
+}
+
+/* Cards float on clear glass — slightly lighter film, let the glass read */
+[data-glass] .status-block,
+[data-glass] .mem-card,
+[data-glass] .assertions-list {
+  background: rgba(0, 0, 0, 0.14);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+[data-glass][data-theme="light"] .status-block,
+[data-glass][data-theme="light"] .mem-card,
+[data-glass][data-theme="light"] .assertions-list {
+  background: rgba(255, 255, 255, 0.28);
+}
+
 /* ── Reduced transparency (Accessibility ▸ Display) ──────────────────────────*/
 @media (prefers-reduced-transparency: reduce) {
   .sidebar {

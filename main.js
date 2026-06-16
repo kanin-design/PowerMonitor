@@ -7,6 +7,43 @@ const fs = require("fs");
 
 const DB_PATH = join(homedir(), ".local", "powermon.db");
 
+/* ── Liquid Glass (macOS 26+) ────────────────────────────────────────────── */
+// Real NSGlassEffectView via electron-liquid-glass. When available we skip
+// Electron's vibrancy entirely — it would render on top and look frosted.
+let liquidGlass = null;
+try {
+  const lg = require('electron-liquid-glass');
+  if (lg.isGlassSupported()) liquidGlass = lg;
+} catch {}
+
+// Test presets, switchable via View ▸ Glass Style. Tint changes require a
+// fresh addView (the addon only applies tint at creation) — addView removes
+// the previous glass view internally, so re-adding is safe.
+const GLASS_PRESETS = {
+  'Default (Scrim)':     { variant: 0, scrim: 1 },
+  'Pure Glass':          { variant: 0 },
+  'Clear':               { variant: 1 },
+  'Clear + Dark Tint':   { variant: 1, tint: '#00000040' },
+  'Regular + Dark Tint': { variant: 0, tint: '#00000040' },
+  'Control Center':      { variant: 8, scrim: 1 },
+  'Subdued':             { variant: 0, subdued: 1 },
+};
+const DEFAULT_GLASS_PRESET = 'Default (Scrim)';
+
+function applyGlassPreset(name) {
+  if (!liquidGlass || !mainWindow || mainWindow.isDestroyed()) return;
+  const p = GLASS_PRESETS[name] || GLASS_PRESETS[DEFAULT_GLASS_PRESET];
+  try {
+    const opts = { cornerRadius: 12 };
+    if (p.tint) opts.tintColor = p.tint;
+    const id = liquidGlass.addView(mainWindow.getNativeWindowHandle(), opts);
+    if (id === -1) return;
+    liquidGlass.setVariant(id, p.variant ?? 0);
+    liquidGlass.unstable_setScrim(id, p.scrim ? 1 : 0);
+    liquidGlass.unstable_setSubdued(id, p.subdued ? 1 : 0);
+  } catch (e) { console.error('glass preset failed:', e.message); }
+}
+
 /* ── Logger / LaunchAgent constants ─────────────────────────────────────── */
 const PLIST_LABEL  = 'com.delfinsoft.powermonitor';
 const PLIST_PATH   = join(homedir(), 'Library', 'LaunchAgents', `${PLIST_LABEL}.plist`);
@@ -172,6 +209,7 @@ function sendSettings() {
       isDark:    nativeTheme.shouldUseDarkColors,
       timeRange: settings.timeRange,
       cpuView:   settings.cpuView || 'blocks',
+      glass:     !!liquidGlass,
     });
   } catch {}
 }
@@ -252,6 +290,23 @@ function buildMenu() {
             { label: 'Smooth',         type: 'radio', checked: cv === 'smooth', click: () => setCpuView('smooth') },
           ],
         },
+        // Liquid Glass test presets — only shown when the real material is active
+        ...(liquidGlass ? [
+          { type: 'separator' },
+          {
+            label: 'Glass Style',
+            submenu: Object.keys(GLASS_PRESETS).map(name => ({
+              label: name,
+              type: 'radio',
+              checked: (settings.glassPreset || DEFAULT_GLASS_PRESET) === name,
+              click: () => {
+                settings.glassPreset = name;
+                saveSettings();
+                applyGlassPreset(name);
+              },
+            })),
+          },
+        ] : []),
       ],
     },
     { label: 'Window', role: 'windowMenu' },
@@ -269,8 +324,6 @@ function createWindow() {
     minHeight: 560,
     titleBarStyle: 'hiddenInset',
     trafficLightPosition: { x: 16, y: 16 },
-    vibrancy: 'under-window',
-    visualEffectState: 'active',
     transparent: true,
     backgroundColor: '#00000000',
     icon: join(__dirname, "icons", "mac", "icon.icns"),
@@ -282,8 +335,16 @@ function createWindow() {
     },
   };
   if (typeof b.x === 'number' && typeof b.y === 'number') { opts.x = b.x; opts.y = b.y; }
+  // Fallback material for macOS < 26 (or if the glass addon failed to load)
+  if (!liquidGlass) { opts.vibrancy = 'under-window'; opts.visualEffectState = 'active'; }
   mainWindow = new BrowserWindow(opts);
   mainWindow.loadFile(join(__dirname, "src", "index.html"));
+
+  if (liquidGlass) {
+    mainWindow.webContents.once('did-finish-load', () => {
+      applyGlassPreset(settings.glassPreset || DEFAULT_GLASS_PRESET);
+    });
+  }
 
   let boundsTimer;
   const saveBounds = () => {
