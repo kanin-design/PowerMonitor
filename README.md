@@ -2,20 +2,9 @@
 
 A macOS app for tracking battery health, power draw, and CPU usage over time — built for Apple Silicon.
 
-![PowerMonitor screenshot](docs/screenshot.png)
+![PowerMonitor screenshot](docs/glass-screenshot.png)
 
 > **Alpha software.** Expect rough edges. Feedback welcome.
-
----
-
-## Liquid Glass (experimental)
-
-This branch adds a real **Liquid Glass** sidebar on macOS 26+ (Tahoe), using
-the native `NSGlassEffectView` material instead of Electron's vibrancy —
-true refraction and light bleed-through from whatever's behind the window,
-switchable via View ▸ Glass Style.
-
-![Liquid Glass sidebar](docs/glass-screenshot.png)
 
 ---
 
@@ -29,7 +18,7 @@ switchable via View ▸ Glass Style.
 - **Smart x-axis** — relative labels for short ranges ("8m ago"), absolute clock times for 24h, dates for 30d
 - **Hover crosshair** — hover any chart to see exact values and timestamps
 - **LaunchAgent logger** — collects data every 60 seconds in the background, even when the app is closed
-- **Glass UI** — native macOS vibrancy, dark/light mode support
+- **Liquid Glass sidebar** — real `NSGlassEffectView` material on macOS 26+ (Tahoe), with several switchable presets under View ▸ Glass Style; falls back to native vibrancy on earlier macOS versions
 - **Local only** — all data stays on your machine in a SQLite database
 
 ---
@@ -38,12 +27,13 @@ switchable via View ▸ Glass Style.
 
 - macOS 13 Ventura or later
 - Apple Silicon (M1 or newer)
+- macOS 26 (Tahoe) or later for the real Liquid Glass sidebar material — older versions automatically use standard vibrancy instead
 
 ---
 
 ## Install
 
-1. Download `PowerMonitor-0.0.2-arm64.dmg` from [Releases](../../releases/latest)
+1. Download the latest `PowerMonitor-*.dmg` from [Releases](../../releases/latest)
 2. Open the DMG and drag **PowerMonitor.app** to your Applications folder
 3. Launch the app — on first run it installs a background logger automatically
 
