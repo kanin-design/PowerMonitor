@@ -1,6 +1,9 @@
 # PowerMonitor
 
-A macOS app for tracking battery health, power draw, and CPU usage over time — built for Apple Silicon.
+A retrospective system monitor for Apple Silicon Macs. Most tools show you
+power and CPU usage *right now* — PowerMonitor keeps a history, so you can
+go back and see what your battery, power draw, and top processes were doing
+10 minutes or 30 days ago.
 
 ![PowerMonitor screenshot](docs/glass-screenshot.png)
 
@@ -10,45 +13,56 @@ A macOS app for tracking battery health, power draw, and CPU usage over time —
 
 ## Features
 
-- **Battery level** — live % with charge/discharge history
-- **Power draw** — real-time wattage (positive when charging, negative when discharging)
-- **CPU by process** — per-core usage breakdown across your top processes, no 100% cap
+- **Battery history** — charge/discharge level over time, with charging state and estimated time remaining
+- **Power draw** — real-time wattage (positive while charging, negative while discharging)
+- **CPU by process** — per-core usage breakdown for your top processes over the selected window, switchable between stacked-blocks and smooth views
 - **System info** — chip, cores, GPU cores, RAM, battery health and cycle count
-- **Range selector** — view the last 10m, 1h, 6h, 24h, or 30 days
-- **Smart x-axis** — relative labels for short ranges ("8m ago"), absolute clock times for 24h, dates for 30d
-- **Hover crosshair** — hover any chart to see exact values and timestamps
-- **LaunchAgent logger** — collects data every 60 seconds in the background, even when the app is closed
-- **Liquid Glass sidebar** — real `NSGlassEffectView` material on macOS 26+ (Tahoe), with several switchable presets under View ▸ Glass Style; falls back to native vibrancy on earlier macOS versions
-- **Local only** — all data stays on your machine in a SQLite database
+- **Memory pressure** — usage colored by actual `kern.memorystatus_vm_pressure_level`, not just percentage full
+- **Sleep assertions** — see what's keeping your Mac awake, with system noise filtered out
+- **Time ranges** — 10 minutes, 1 hour, 6 hours, 24 hours, or 30 days, each with axis labels suited to the range
+- **Hover for detail** — every chart shows exact values and timestamps for the sample under your cursor
+- **Liquid Glass sidebar** — real `NSGlassEffectView` material on macOS 26 (Tahoe) and later, with several switchable presets under View ▸ Glass Style; falls back to standard vibrancy on earlier macOS versions
+- **Light/dark/system theme**, native to macOS
+- **Runs in the background** — a LaunchAgent logs every 60 seconds even while the app itself is closed
+- **Local only** — everything lives in a SQLite database on your machine; nothing is sent anywhere
 
 ---
 
 ## Requirements
 
-- macOS 13 Ventura or later
+- macOS 13 (Ventura) or later
 - Apple Silicon (M1 or newer)
-- macOS 26 (Tahoe) or later for the real Liquid Glass sidebar material — older versions automatically use standard vibrancy instead
+- macOS 26 (Tahoe) or later for the real Liquid Glass sidebar material — earlier versions fall back to vibrancy automatically, no separate build needed
 
 ---
 
 ## Install
 
 1. Download the latest `PowerMonitor-*.dmg` from [Releases](../../releases/latest)
-2. Open the DMG and drag **PowerMonitor.app** to your Applications folder
-3. Launch the app — on first run it installs a background logger automatically
+2. Open the DMG and drag **PowerMonitor.app** into your Applications folder
+3. Launch it — on first run, PowerMonitor installs its background logger automatically
 
-> **Gatekeeper note:** Right-click → Open on first launch if macOS blocks it. The app is not yet notarized.
+> **Gatekeeper note:** the app isn't notarized yet, so right-click → Open on first launch if macOS blocks it.
 
 ---
 
 ## How it works
 
-PowerMonitor installs a macOS LaunchAgent that runs a lightweight logger every 60 seconds using the bundled Electron binary — no separate runtime required. Data is written to a local SQLite database at `~/.local/powermon.db`. The app reads from that database and renders charts over your chosen time window.
+```
+LaunchAgent logger  →  ~/.local/powermon.db (SQLite)  →  PowerMonitor.app
+   samples every 60s         local, never synced           reads + renders
+```
 
-The logger collects:
+PowerMonitor installs a macOS LaunchAgent that samples your system every 60
+seconds using the bundled Electron binary — no separate runtime required.
+Each sample is written to a local SQLite database. The app itself only
+reads from that database and draws charts over whichever time window
+you've selected; it never writes to the log on its own.
+
+Each sample records:
 - Battery percentage, charging state, amperage, voltage, estimated time remaining
-- Top CPU and memory consuming processes
-- Sleep assertions (anything preventing your Mac from sleeping)
+- Top CPU- and memory-consuming processes
+- Sleep assertions — anything currently preventing the Mac from sleeping
 
 ---
 
@@ -64,21 +78,21 @@ npm install
 npm run build
 ```
 
-The build script packages the app and produces a DMG in the project root.
+This packages the app and produces a DMG in the project root.
 
 ---
 
-## Data
+## Your data
 
-All data is stored locally at `~/.local/powermon.db` (SQLite). Nothing is sent anywhere.
+Everything lives locally at `~/.local/powermon.db` (SQLite) — nothing leaves your machine.
 
-To inspect your data:
+Inspect it directly:
 
 ```bash
 sqlite3 ~/.local/powermon.db "SELECT ts, battery FROM power_log ORDER BY ts_unix DESC LIMIT 10"
 ```
 
-To uninstall the background logger:
+Remove the background logger entirely:
 
 ```bash
 launchctl unload ~/Library/LaunchAgents/com.delfinsoft.powermonitor.plist
