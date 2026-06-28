@@ -1075,19 +1075,20 @@ function renderSidebar() {
   if (live.battery != null)
     document.getElementById('sb-batt-num').textContent = live.battery + '%';
 
-  // connected = charger physically present (ExternalConnected) — updates immediately on plug/unplug
-  // charging  = current actively flowing in (IsCharging) — may lag or be false at ~100% optimization
-  const connected  = live.connected;
-  const isCharging = live.charging;
+  // Single settled power state from main (derived from IORegistry flags, not
+  // the amperage sign). Header, time-left and watts all map from it so they can
+  // never disagree. Fall back to a connected/charging derivation for the brief
+  // DB-seeded render before the first live-update arrives (no powerState yet).
+  const ps = live.powerState
+    || (live.connected ? (live.charging ? 'charging' : 'plugged')
+       : live.charging ? 'charging' : 'on_battery');
+  const onCharger = ps !== 'on_battery';       // charger present (charging or held)
 
-  // State label and dot: driven by connected, not IsCharging
+  // State label and dot
   const stateEl = document.getElementById('sb-state');
-  // Three states: "Charging" only when current actually flows in — a plugged
-  // Mac that is holding or draining its battery says "Plugged In" instead,
-  // so the header can never contradict the watts label below it.
   stateEl.querySelector('.state-text').textContent =
-    connected ? (isCharging ? 'Charging' : 'Plugged In') : 'On Battery';
-  stateEl.className = 'battery-state ' + (connected ? 'charging' : 'discharging');
+    ps === 'on_battery' ? 'On Battery' : ps === 'charging' ? 'Charging' : 'Plugged In';
+  stateEl.className = 'battery-state ' + (onCharger ? 'charging' : 'discharging');
 
   // Time left
   const tl = document.getElementById('sb-timeleft');
@@ -1095,34 +1096,30 @@ function renderSidebar() {
   if (live.timeLeft) {
     const [hh, mm] = live.timeLeft.split(':').map(Number);
     tl.textContent = hh > 0 ? `${hh}h ${mm}m` : `${mm}m`;
-    tlLabel.textContent = connected ? 'until full' : 'remaining';
-    tl.style.color = connected ? 'var(--color-green)'
+    tlLabel.textContent = onCharger ? 'until full' : 'remaining';
+    tl.style.color = onCharger ? 'var(--color-green)'
       : hh < 1 ? 'var(--color-red)' : hh < 3 ? 'var(--color-orange)' : 'var(--text-primary)';
   } else {
     tl.textContent = '—';
-    tlLabel.textContent = connected ? 'until full' : 'remaining';
+    tlLabel.textContent = onCharger ? 'until full' : 'remaining';
     tl.style.color = 'var(--text-tertiary)';
   }
 
-  // Watts + adapter info
+  // Watts + adapter info — verb and color both come from ps (flags), never the
+  // amperage sign, so a plugged-in battery can never be mislabeled "draining".
   const wv = document.getElementById('sb-watts');
   const wvLabel = document.getElementById('sb-watts-label');
   if (live.amperage != null && live.voltage != null) {
     const watts = (live.amperage * live.voltage) / 1e6;
     wv.textContent = Math.abs(watts).toFixed(1) + 'W';
-    // InstantAmperage is noisy around zero (±0.5W even unplugged), so color
-    // and verb use a deadband. Plugged in: green unless the battery is
-    // meaningfully feeding the system; unplugged: never "charging".
-    if (connected && live.adapter) {
+    wv.style.color = onCharger ? 'var(--color-green)' : 'var(--color-orange)';
+    const verb = ps === 'on_battery' ? 'discharging'
+               : ps === 'charging'   ? 'charging' : 'plugged';
+    if (onCharger && live.adapter) {
       const a = live.adapter;
-      const draining = watts < -0.5;
-      const verb = isCharging ? 'charging' : draining ? 'draining' : 'plugged';
-      wv.style.color = draining ? 'var(--color-orange)' : 'var(--color-green)';
       wvLabel.textContent = `${verb} · ${a.watts}W${a.voltage ? ` @ ${a.voltage}V` : ''}`;
     } else {
-      const gaining = connected && watts >= 0;
-      wv.style.color = gaining ? 'var(--color-green)' : 'var(--color-orange)';
-      wvLabel.textContent = gaining ? 'charging' : 'discharging';
+      wvLabel.textContent = verb;
     }
     wvLabel.style.color = '';
   } else {

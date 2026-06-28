@@ -488,7 +488,21 @@ function getLiveData() {
       ? `${Math.floor(timeRemMins / 60)}:${String(timeRemMins % 60).padStart(2, '0')}`
       : null;
 
-    return { battery, charging, connected, amperage, voltage, timeLeft, adapter, mem };
+    // Power direction — one settled state for the whole UI (header + watts) so
+    // they can never disagree. Derived ONLY from the discrete IORegistry flags,
+    // never from the amperage sign: that sign convention is not portable — on
+    // this M5, InstantAmperage reads POSITIVE while discharging on battery
+    // (verified: unplugged, pmset "discharging", InstantAmperage = +1162), so
+    // "negative = draining" silently mislabels charging as draining. The flags
+    // are unambiguous. Amperage is used only for the magnitude shown.
+    //   not connected            → on battery (discharging)
+    //   connected + IsCharging    → charging
+    //   connected, not charging   → plugged (powered by adapter, battery held)
+    const powerState = !connected ? 'on_battery'
+                     : charging    ? 'charging'
+                     : 'plugged';
+
+    return { battery, charging, connected, amperage, voltage, timeLeft, adapter, mem, powerState };
   } catch { return null; }
 }
 
