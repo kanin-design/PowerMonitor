@@ -489,12 +489,14 @@ function getLiveData() {
       : null;
 
     // Power direction — one settled state for the whole UI (header + watts) so
-    // they can never disagree. Derived ONLY from the discrete IORegistry flags,
-    // never from the amperage sign: that sign convention is not portable — on
-    // this M5, InstantAmperage reads POSITIVE while discharging on battery
-    // (verified: unplugged, pmset "discharging", InstantAmperage = +1162), so
-    // "negative = draining" silently mislabels charging as draining. The flags
-    // are unambiguous. Amperage is used only for the magnitude shown.
+    // they can never disagree. Derived from the discrete IORegistry flags
+    // (ExternalConnected / IsCharging), not the instantaneous amperage sign.
+    // The sign is the normal convention (positive = charging, negative =
+    // discharging), but InstantAmperage spikes across zero sample-to-sample:
+    // e.g. a single -16.8W discharge blip one second before charging ramps to
+    // +25W. A sign-based label flickers on those blips and reads "draining"
+    // while plugged in. The flags are stable; amperage is used only for the
+    // magnitude shown.
     //   not connected            → on battery (discharging)
     //   connected + IsCharging    → charging
     //   connected, not charging   → plugged (powered by adapter, battery held)
