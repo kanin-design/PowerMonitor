@@ -22,7 +22,7 @@ const MACMON_PATH = process.env.ELECTRON_RESOURCE_PATH
 
 /* ── SQLite helper ──────────────────────────────────────────────────────────*/
 function sqlExec(query) {
-  execSync(`sqlite3 "${DB_PATH}" ${shellQuote(query)}`, { encoding: 'utf8' });
+  execSync(`sqlite3 "${DB_PATH}" ${shellQuote('PRAGMA busy_timeout=5000; ' + query)}`, { encoding: 'utf8' });
 }
 
 function shellQuote(s) {

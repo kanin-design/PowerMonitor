@@ -556,7 +556,11 @@ function isLoggerCurrent() {
   if (!fs.existsSync(PLIST_PATH)) return false;
   try {
     const content = fs.readFileSync(PLIST_PATH, 'utf8');
-    return content.includes(process.execPath) && content.includes(LOGGER_DEST);
+    if (!content.includes(process.execPath) || !content.includes(LOGGER_DEST)) return false;
+    // Plist matching isn't enough — after an OS upgrade launchd rebuilds its
+    // domain and the agent is silently dropped even though the plist is intact.
+    execSync(`launchctl list ${PLIST_LABEL}`, { stdio: 'ignore', timeout: 3000 });
+    return true;
   } catch { return false; }
 }
 
@@ -644,14 +648,14 @@ async function setupLogger() {
     if (!fs.existsSync(LOGGER_DEST))
       throw new Error(`Failed to write logger to ${LOGGER_DEST}`);
 
-    // Unload existing plist if present (upgrade path)
+    // Remove from launchd if present (upgrade path or re-register after OS upgrade)
     if (fs.existsSync(PLIST_PATH)) {
-      try { execSync(`launchctl unload "${PLIST_PATH}"`, { timeout: 5000 }); } catch {}
+      try { execSync(`launchctl bootout gui/${process.getuid()} "${PLIST_PATH}"`, { stdio: 'ignore', timeout: 5000 }); } catch {}
     }
 
-    // Write new plist and load it
+    // Write new plist and bootstrap it
     writePlist();
-    execSync(`launchctl load "${PLIST_PATH}"`, { timeout: 5000 });
+    execSync(`launchctl bootstrap gui/${process.getuid()} "${PLIST_PATH}"`, { timeout: 5000 });
 
     // Run once immediately so DB/table exist before connectDb()
     execSync(`"${process.execPath}" "${LOGGER_DEST}"`, {
