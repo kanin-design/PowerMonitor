@@ -516,9 +516,25 @@ function sendLiveData() {
 }
 
 /* ── Chart data — DB query, smart-scheduled to fire when new data expected ── */
-let lastEntryTs  = null;
-let sysInfo      = null;
-let dbTimer      = null;
+let lastEntryTs      = null;
+let sysInfo          = null;
+let dbTimer          = null;
+let lastAgentCheck   = 0;   // epoch ms — throttle the launchctl health check
+
+// If DB data has gone quiet for >5 min, verify the agent is still in launchd
+// and re-bootstrap if it was dropped (e.g. OS upgrade while the app was running).
+function ensureLoggerAgent() {
+  if (!app.isPackaged) return;
+  const now = Date.now();
+  if (now - lastAgentCheck < 60_000) return;   // at most once per minute
+  lastAgentCheck = now;
+  try {
+    execSync(`launchctl list ${PLIST_LABEL}`, { stdio: 'ignore', timeout: 3000 });
+  } catch {
+    console.warn('powermonitor: logger agent missing from launchd — re-bootstrapping');
+    try { execSync(`launchctl bootstrap gui/${process.getuid()} "${PLIST_PATH}"`, { timeout: 5000 }); } catch {}
+  }
+}
 
 function scheduleNextDbQuery(lastTsUnix) {
   clearTimeout(dbTimer);
@@ -541,6 +557,8 @@ function queryAndSend() {
   if (!entries.length) { scheduleNextDbQuery(null); return; }
   const latest = entries[entries.length - 1];
   scheduleNextDbQuery(latest.ts_unix); // schedule next check before early-exit
+  // Data >5 min stale → verify the agent is still registered in launchd
+  if (Date.now() / 1000 - latest.ts_unix > 300) ensureLoggerAgent();
   if (latest.ts === lastEntryTs) return;
   lastEntryTs = latest.ts;
   if (mainWindow && !mainWindow.isDestroyed()) {
